@@ -1,6 +1,6 @@
-# EventArt OS — Version 1.0
+# EventArt — Version 1.0
 
-EventArt OS is a private event-planning workspace connected to the existing EventArt Airtable base. It does not create, rename, delete, or recreate Airtable tables or fields.
+EventArt is a private event-planning workspace connected to the existing EventArt Airtable base. It does not create, rename, delete, or recreate Airtable tables or fields.
 
 ## Private Airtable setup
 
@@ -14,7 +14,7 @@ The `.env.local` file is private and excluded from source control. The token is 
 ## Start the private preview
 
 1. Open the project in Codex.
-2. Ask Codex: **“Start my private EventArt OS preview.”**
+2. Ask Codex: **“Start my private EventArt preview.”**
 3. Open the local address Codex provides.
 
 ## Airtable safety

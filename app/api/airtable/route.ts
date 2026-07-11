@@ -4,16 +4,25 @@ function cleanEnv(value: string | undefined) {
   return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim();
 }
 
-// vinext runs API routes inside Vite's server/worker environment. Values from
+// The application runs API routes inside a secure server environment. Values from
 // .env files are available through import.meta.env there, not process.env.
 const BASE_ID = cleanEnv(import.meta.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE_ID) || "appcRlgcd7lcTzpFS";
 const TOKEN = cleanEnv(import.meta.env.AIRTABLE_TOKEN || process.env.AIRTABLE_TOKEN);
 const allowed = new Set(["Clients", "Events", "Inventory", "Rental Orders", "Payments", "Timeline", "Guests", "Vendors", "Seating Tables", "Design Board", "Budgets", "Budget Items"]);
 const writable: Record<string, Set<string>> = {
+  Clients: new Set(["Client Name", "Email", "Phone number", "Client Type", "Status", "Notes"]),
+  Events: new Set(["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Venue Address", "Guest Count", "Theme", "Color Palette", "Budget", "Total Contract", "Lead Planner", "Deposit Paid"]),
+  Payments: new Set(["Event", "Client", "Payment Type", "Payment Amount", "Payment Date", "Due Date", "Payment Method", "Invoice Number", "Payment Status", "Notes"]),
+  "Rental Orders": new Set(["Event", "Client", "Rental Item", "Rental Start Date", "Rental End Date", "Quantity", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Discount", "Order Status", "Notes", "Return Condition"]),
+  Guests: new Set(["Event", "First Name", "Last Name", "Email", "Phone", "RSVP Status", "RSVP Date", "Invitation Sent", "Assigned Table", "Seat Number", "Meal Choice", "Dietary Restrictions", "Family/Group", "VIP", "Children", "Gift Received", "Thank You Sent", "Notes", "Seating Chart"]),
+  Timeline: new Set(["Timeline Item", "Event", "Date", "Start Time", "End Time", "Category", "Responsible Person", "Vendor", "Location", "Status", "Priority", "Notes"]),
+  Vendors: new Set(["Vendor Name", "Category", "Contact Person", "Email", "Phone", "Website", "Event", "Contract Status", "Arrival Time", "Service Start Time", "Service End Time", "Total Fee", "Amount Paid", "Insurance Received", "Contract", "Notes"]),
+  "Seating Tables": new Set(["Table Name", "Event", "Table Number", "Table Type", "Capacity", "Assigned Guests", "Table Location", "VIP Table", "Notes"]),
+  "Design Board": new Set(["Design Title", "Event", "Design Category", "Design File", "Preview Image", "Design Link", "Version", "Approval Status", "Date Submitted", "Approval Date", "Client Comments", "Internal Notes", "Visible to Client"]),
   Budgets: new Set(["Budget Name", "Event", "Status", "Proposal Number", "Proposal Date", "Expiration Date", "Introduction", "Scope of Services", "Event Discount", "Contingency Type", "Contingency Value", "Deposit Required", "Payment Schedule", "Terms and Conditions", "Proposal Notes"]),
   "Budget Items": new Set(["Item / Service", "Budget", "Event", "Category", "Custom Category", "Description", "Quantity", "Unit Cost", "Unit Price", "Discount", "Taxable", "Tax Rate", "Vendor", "Notes", "Optional Item", "Included in Proposal", "Display Order"]),
 };
-const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order"]);
+const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order", "Guest Count", "Budget", "Total Contract", "Deposit Paid", "Payment Amount", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Seat Number", "Children", "Total Fee", "Amount Paid", "Table Number", "Capacity", "Version"]);
 const recentRequests = new Map<string, number>();
 
 function headers() { return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }; }
