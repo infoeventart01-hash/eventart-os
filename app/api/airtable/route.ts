@@ -49,7 +49,8 @@ function safeFields(table: string, input: unknown) {
   const output: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(input as Record<string, unknown>)) {
     if (!writable[table].has(name)) continue;
-    if (numericFields.has(name)) {
+    // "Budget" is a currency field on Events but a linked-record field on Budget Items.
+    if (numericFields.has(name) && !(table === "Budget Items" && name === "Budget")) {
       const number = typeof value === "number" ? value : Number(value);
       if (!Number.isFinite(number) || number < 0) throw new Error(`${name} must be a positive number`);
       output[name] = number;
