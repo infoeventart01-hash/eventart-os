@@ -98,6 +98,18 @@ export default function EventArt() {
     setTimeout(() => setNotice(""), 3000);
   }
 
+  async function remove(record: RecordRow, recordTable = table) {
+    const name = shown(record.fields[displayFields[recordTable]?.[0] || "Budget Name"]);
+    if (!window.confirm(`Delete “${name}”? This will remove the record from Airtable and cannot be undone.`)) return;
+    setNotice("Deleting from Airtable…");
+    try {
+      const res = await fetch("/api/airtable", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ table: recordTable, id: record.id }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : data.error?.message || "Unable to delete this record");
+      setRecords(old => old.filter(r => r.id !== record.id)); setEditing(null); setNotice("Record deleted from Airtable."); setRefreshKey(k => k + 1);
+    } catch (e) { setNotice(e instanceof Error ? e.message : "Unable to delete this record"); }
+  }
+
   return (
     <main className="app-shell">
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
@@ -118,11 +130,11 @@ export default function EventArt() {
           {budgetEvent ? <EventWorkspace event={budgetEvent} initialTab={workspaceTab} onBack={() => setBudgetEvent(null)} /> : <>
           <div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? "Welcome back, Maritza" : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : `Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>
           {notice && <div className="notice">{notice}</div>}
-          {loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} payments={payments} timeline={timeline} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={(event,tab) => { setWorkspaceTab(tab); setBudgetEvent(event); }} /> : <RecordTable table={table} records={filtered} onEdit={setEditing} onBudget={(event) => { setWorkspaceTab("Overview"); setBudgetEvent(event); }} />}
+          {loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} payments={payments} timeline={timeline} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={(event,tab) => { setWorkspaceTab(tab); setBudgetEvent(event); }} onDelete={budget => remove(budget,"Budgets")} /> : <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={(event) => { setWorkspaceTab("Overview"); setBudgetEvent(event); }} />}
           </>}
         </div>
       </section>
-      {editing && <EditPanel table={table} record={editing} onClose={() => setEditing(null)} onSave={save} />}
+      {editing && <RecordForm table={table} record={editing} onClose={() => setEditing(null)} onSaved={(updated) => { setRecords(old => old.map(r => r.id === updated.id ? updated : r)); setEditing(null); setNotice("Changes saved to Airtable."); setRefreshKey(k => k + 1); }} />}
       {createTable && <RecordForm table={createTable} onClose={() => setCreateTable(null)} onSaved={() => { setCreateTable(null); setNotice("Record created successfully."); setRefreshKey(k => k + 1); }} />}
       {mobileNav && <button className="scrim" onClick={() => setMobileNav(false)} aria-label="Close menu" />}
     </main>
@@ -147,7 +159,7 @@ function Dashboard({ events, payments, timeline }: { events: RecordRow[]; paymen
 function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{note}</small></div>; }
 function CardHead({ title, link }: { title: string; link?: string }) { return <div className="card-head"><div><span className="gold-line" /><h2>{title}</h2></div>{link && <button>{link} →</button>}</div>; }
 
-function BudgetsPage({ records, query, open }: { records: RecordRow[]; query: string; open: (event: RecordRow, tab: string) => void }) {
+function BudgetsPage({ records, query, open, onDelete }: { records: RecordRow[]; query: string; open: (event: RecordRow, tab: string) => void; onDelete: (budget: RecordRow) => void }) {
   const [status, setStatus] = useState("All");
   const tagged = records as Array<RecordRow & { _table?: string }>;
   const budgets = tagged.filter(r => r._table === "Budgets");
@@ -162,12 +174,12 @@ function BudgetsPage({ records, query, open }: { records: RecordRow[]; query: st
     const haystack = `${JSON.stringify(budget.fields)} ${event ? JSON.stringify(event.fields) : ""}`.toLowerCase();
     return matchesStatus && haystack.includes(query.toLowerCase());
   });
-  return <section className="table-card budgets-list"><div className="table-tools"><span><b>{rows.length}</b> budgets and proposals</span><label className="status-filter">Status<select value={status} onChange={e => setStatus(e.target.value)}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label></div><div className="table-wrap"><table><thead><tr>{["Budget Name","Event","Status","Proposal Number","Proposal Date","Total Client Price","Deposit Required","Remaining Balance","Actions"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(({ budget, event }) => <tr key={budget.id}><td><b>{shown(budget.fields["Budget Name"])}</b></td><td>{event ? shown(event.fields["Event Name"]) : "Linked event unavailable"}</td><td><span className="pill">{shown(budget.fields.Status)}</span></td><td>{shown(budget.fields["Proposal Number"])}</td><td>{shown(budget.fields["Proposal Date"])}</td><td>{money(budget.fields["Total Client Price"])}</td><td>{money(budget.fields["Deposit Required"])}</td><td>{money(budget.fields["Remaining Balance"])}</td><td className="budget-list-actions"><button disabled={!event} onClick={() => event && open(event,"Budget & Proposal")}>Open Budget</button><button disabled={!event} onClick={() => event && open(event,"Overview")}>Open related Event</button></td></tr>)}</tbody></table>{!rows.length && <div className="workspace-empty"><h3>No matching budgets</h3><p>Try another search or status filter.</p></div>}</div></section>;
+  return <section className="table-card budgets-list"><div className="table-tools"><span><b>{rows.length}</b> budgets and proposals</span><label className="status-filter">Status<select value={status} onChange={e => setStatus(e.target.value)}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label></div><div className="table-wrap"><table><thead><tr>{["Budget Name","Event","Status","Proposal Number","Proposal Date","Total Client Price","Deposit Required","Remaining Balance","Actions"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(({ budget, event }) => <tr key={budget.id}><td><b>{shown(budget.fields["Budget Name"])}</b></td><td>{event ? shown(event.fields["Event Name"]) : "Linked event unavailable"}</td><td><span className="pill">{shown(budget.fields.Status)}</span></td><td>{shown(budget.fields["Proposal Number"])}</td><td>{shown(budget.fields["Proposal Date"])}</td><td>{money(budget.fields["Total Client Price"])}</td><td>{money(budget.fields["Deposit Required"])}</td><td>{money(budget.fields["Remaining Balance"])}</td><td className="budget-list-actions"><button disabled={!event} onClick={() => event && open(event,"Budget & Proposal")}>Open Budget</button><button disabled={!event} onClick={() => event && open(event,"Overview")}>Open related Event</button><button className="danger" onClick={() => onDelete(budget)}>Delete</button></td></tr>)}</tbody></table>{!rows.length && <div className="workspace-empty"><h3>No matching budgets</h3><p>Try another search or status filter.</p></div>}</div></section>;
 }
 
-function RecordTable({ table, records, onEdit, onBudget }: { table: string; records: RecordRow[]; onEdit: (r: RecordRow) => void; onBudget: (r: RecordRow) => void }) {
+function RecordTable({ table, records, onEdit, onDelete, onBudget }: { table: string; records: RecordRow[]; onEdit: (r: RecordRow) => void; onDelete: (r: RecordRow) => void; onBudget: (r: RecordRow) => void }) {
   const fields = displayFields[table] || [];
-  return <section className="table-card"><div className="table-tools"><span><b>{records.length}</b> records synced from Airtable</span></div><div className="table-wrap"><table><thead><tr>{fields.map((f) => <th key={f}>{f}</th>)}<th /></tr></thead><tbody>{records.map((r) => <tr key={r.id}>{fields.map((f) => <td key={f}>{f === statusField[table] ? <span className="pill">{shown(r.fields[f])}</span> : shown(r.fields[f])}</td>)}<td className="row-actions">{table === "Events" && <button className="budget-link" onClick={() => onBudget(r)}>Open Workspace</button>}<button className="edit" onClick={() => onEdit(r)}>Edit</button></td></tr>)}</tbody></table>{!records.length && <div className="no-records">No matching records found in Airtable.</div>}</div></section>;
+  return <section className="table-card"><div className="table-tools"><span><b>{records.length}</b> records synced from Airtable</span></div><div className="table-wrap"><table><thead><tr>{fields.map((f) => <th key={f}>{f}</th>)}<th /></tr></thead><tbody>{records.map((r) => <tr key={r.id}>{fields.map((f) => <td key={f}>{f === statusField[table] ? <span className="pill">{shown(r.fields[f])}</span> : shown(r.fields[f])}</td>)}<td className="row-actions">{table === "Events" && <button className="budget-link" onClick={() => onBudget(r)}>Open Workspace</button>}<button className="edit" onClick={() => onEdit(r)}>Edit</button><button className="danger" onClick={() => onDelete(r)}>Delete</button></td></tr>)}</tbody></table>{!records.length && <div className="no-records">No matching records found in Airtable.</div>}</div></section>;
 }
 
 function Reports({ payments }: { payments: RecordRow[] }) {

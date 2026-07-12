@@ -12,6 +12,7 @@ const allowed = new Set(["Clients", "Events", "Inventory", "Rental Orders", "Pay
 const writable: Record<string, Set<string>> = {
   Clients: new Set(["Client Name", "Email", "Phone number", "Client Type", "Status", "Notes"]),
   Events: new Set(["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Venue Address", "Guest Count", "Theme", "Color Palette", "Budget", "Total Contract", "Lead Planner", "Deposit Paid"]),
+  Inventory: new Set(["Item Name", "Category", "Subcategory", "Photo", "Quantity Owned", "Quantity Available", "Rental Price", "Replacement Cost", "Security Deposit", "Warehouse", "Shelf/Bin", "Condition", "Cleaning Status", "Notes", "Style Tags", "Available for Rental"]),
   Payments: new Set(["Event", "Client", "Payment Type", "Payment Amount", "Payment Date", "Due Date", "Payment Method", "Invoice Number", "Payment Status", "Notes"]),
   "Rental Orders": new Set(["Event", "Client", "Rental Item", "Rental Start Date", "Rental End Date", "Quantity", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Discount", "Order Status", "Notes", "Return Condition"]),
   Guests: new Set(["Event", "First Name", "Last Name", "Email", "Phone", "RSVP Status", "RSVP Date", "Invitation Sent", "Assigned Table", "Seat Number", "Meal Choice", "Dietary Restrictions", "Family/Group", "VIP", "Children", "Gift Received", "Thank You Sent", "Notes", "Seating Chart"]),
@@ -22,7 +23,7 @@ const writable: Record<string, Set<string>> = {
   Budgets: new Set(["Budget Name", "Event", "Status", "Proposal Number", "Proposal Date", "Expiration Date", "Introduction", "Scope of Services", "Event Discount", "Contingency Type", "Contingency Value", "Deposit Required", "Payment Schedule", "Terms and Conditions", "Proposal Notes"]),
   "Budget Items": new Set(["Item / Service", "Budget", "Event", "Category", "Custom Category", "Description", "Quantity", "Unit Cost", "Unit Price", "Discount", "Taxable", "Tax Rate", "Vendor", "Notes", "Optional Item", "Included in Proposal", "Display Order"]),
 };
-const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order", "Guest Count", "Budget", "Total Contract", "Deposit Paid", "Payment Amount", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Seat Number", "Children", "Total Fee", "Amount Paid", "Table Number", "Capacity", "Version"]);
+const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order", "Guest Count", "Budget", "Total Contract", "Deposit Paid", "Payment Amount", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Seat Number", "Children", "Total Fee", "Amount Paid", "Table Number", "Capacity", "Version", "Quantity Owned", "Quantity Available", "Replacement Cost"]);
 const recentRequests = new Map<string, number>();
 
 function headers() { return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }; }
@@ -52,7 +53,7 @@ function safeFields(table: string, input: unknown) {
     // "Budget" is a currency field on Events but a linked-record field on Budget Items.
     if (numericFields.has(name) && !(table === "Budget Items" && name === "Budget")) {
       const number = typeof value === "number" ? value : Number(value);
-      if (!Number.isFinite(number) || number < 0) throw new Error(`${name} must be a positive number`);
+      if (!Number.isFinite(number) || number < 0) throw new Error(`${name} must be zero or a positive number`);
       output[name] = number;
     } else output[name] = value;
   }
