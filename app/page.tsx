@@ -3,23 +3,32 @@
 import { useEffect, useMemo, useState } from "react";
 import EventWorkspace from "./EventWorkspace";
 import RecordForm, { formConfigs } from "./RecordForm";
+import DesignStudio from "./DesignStudio";
 
-type RecordRow = { id: string; createdTime?: string; fields: Record<string, unknown> };
+type RecordRow = { id: string; createdTime?: string; fields: Record<string, unknown>; displayFields?: Record<string, string>; computedFields?: Record<string, number> };
 
 const sections = [
-  ["Dashboard", "Overview", "dashboard"], ["Events", "Events", "events"], ["Budgets & Proposals", "Budgets", "budgets"],
-  ["Clients", "Clients", "clients"], ["Inventory", "Inventory", "inventory"],
-  ["Rental Orders", "Rental Orders", "orders"], ["Payments", "Payments", "payments"],
-  ["Tasks", "Timeline", "tasks"], ["Guests", "Guests", "guests"],
-  ["Reports", "Payments", "reports"], ["Calendar", "Events", "calendar"],
-  ["Kanban Board", "Events", "kanban"], ["Vendors", "Vendors", "vendors"],
-  ["Seating Chart", "Seating Tables", "seating"], ["Design Board", "Design Board", "design"],
+  ["Dashboard", "Overview", "dashboard"],
+  ["Clients", "Clients", "clients"], ["Events", "Events", "events"], ["Budgets & Proposals", "Budgets", "budgets"],
+  ["Tasks", "Timeline", "tasks"], ["Calendar", "Events", "calendar"], ["Kanban Board", "Events", "kanban"], ["Guests", "Guests", "guests"], ["Seating Chart", "Seating Tables", "seating"], ["Vendors", "Vendors", "vendors"],
+  ["Inventory", "Inventory", "inventory"], ["Rental Orders", "Rental Orders", "orders"], ["Payments", "Payments", "payments"],
+  ["Service Catalog", "Service Catalog", "catalog"],
+  ["Design Studio", "Design Board", "design"],
+  ["Reports", "Payments", "reports"],
+] as const;
+
+const navGroups = [
+  { label: "Client Management", items: ["Clients", "Events", "Budgets & Proposals"] },
+  { label: "Event Operations", items: ["Tasks", "Calendar", "Kanban Board", "Guests", "Seating Chart", "Vendors"] },
+  { label: "Rentals & Finance", items: ["Inventory", "Rental Orders", "Payments", "Service Catalog"] },
+  { label: "Creative", items: ["Design Studio"] },
+  { label: "Analytics", items: ["Reports"] },
 ] as const;
 
 const displayFields: Record<string, string[]> = {
-  Events: ["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Guest Count", "Budget", "Balance Due"],
+  Events: ["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Guest Count", "Budget", "Total Contract", "Amount Paid", "Balance Due"],
   Clients: ["Client Name", "Email", "Phone number", "Client Type", "Status", "Events 2"],
-  Inventory: ["Item Name", "Category", "Quantity Available", "Rental Price", "Condition", "Cleaning Status", "Available for Rental"],
+  Inventory: ["Photo", "Item Name", "Category", "Subcategory", "Quantity Owned", "Quantity Available", "Rental Price", "Replacement Cost", "Condition", "Cleaning Status"],
   "Rental Orders": ["Order ID", "Event", "Client", "Rental Item", "Rental Start Date", "Rental End Date", "Quantity", "Total Rental", "Order Status"],
   Payments: ["Payment ID", "Client", "Payment Type", "Payment Amount", "Payment Date", "Due Date", "Payment Method", "Payment Status"],
   Timeline: ["Timeline Item", "Event", "Date", "Start Time", "Category", "Responsible Person", "Status", "Priority"],
@@ -27,6 +36,7 @@ const displayFields: Record<string, string[]> = {
   Vendors: ["Vendor Name", "Category", "Contact Person", "Email", "Phone", "Event", "Contract Status", "Balance Due"],
   "Seating Tables": ["Table Name", "Event", "Table Number", "Table Type", "Capacity", "Assigned Guest Count", "Remaining Seats", "VIP Table"],
   "Design Board": ["Design Title", "Event", "Design Category", "Version", "Approval Status", "Date Submitted", "Visible to Client"],
+  "Service Catalog": ["Service Name", "Category", "Description", "Standard Unit Price", "Standard Unit Cost", "Taxable", "Optional by Default", "Active", "Event Types"],
 };
 
 const statusField: Record<string, string> = { Events: "Event Status", Clients: "Status", Inventory: "Condition", "Rental Orders": "Order Status", Payments: "Payment Status", Timeline: "Status", Guests: "RSVP Status", Vendors: "Contract Status", "Design Board": "Approval Status" };
@@ -41,7 +51,25 @@ function shown(value: unknown) {
 
 function money(value: unknown) {
   const n = Number(value || 0);
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n);
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.max(0, n));
+}
+
+function tableValue(record: RecordRow, field: string) {
+  if (record.computedFields?.[field] !== undefined) return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(record.computedFields[field]);
+  if (record.displayFields?.[field]) return record.displayFields[field];
+  if (field === "Event Name") return shown(record.fields[field]).replaceAll("_", " ").replace(/\s+/g, " ").trim();
+  if (["Ceremony Date & Time", "Start Time", "End Time"].includes(field) && record.fields[field]) {
+    const date = new Date(String(record.fields[field]));
+    if (!Number.isNaN(date.getTime())) return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Toronto" }).format(date);
+  }
+  if (["Budget", "Total Contract", "Amount Paid", "Balance Due", "Rental Price", "Replacement Cost"].includes(field)) return record.fields[field] == null || record.fields[field] === "" ? "—" : new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(record.fields[field]) || 0);
+  return shown(record.fields[field]);
+}
+
+function InventoryThumbnail({value,name}:{value:unknown;name:unknown}) {
+  const attachment=Array.isArray(value)?value[0] as {url?:string;thumbnails?:{small?:{url?:string}}}:undefined;
+  const src=attachment?.thumbnails?.small?.url||attachment?.url;
+  return src?<img className="inventory-thumbnail" src={src} alt={String(name||"Inventory item")}/>:<span className="inventory-thumbnail empty" aria-label="No photo">—</span>;
 }
 
 export default function EventArt() {
@@ -57,6 +85,7 @@ export default function EventArt() {
   const [createTable, setCreateTable] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [workspaceTab, setWorkspaceTab] = useState("Overview");
+  const [financialTotals, setFinancialTotals] = useState({ revenueReceived: 0, outstanding: 0 });
 
   const config = sections.find(([label]) => label === active) || sections[0];
   const table = config[1];
@@ -69,12 +98,16 @@ export default function EventArt() {
       const tables = mode === "dashboard" ? ["Events", "Payments", "Timeline"] : mode === "budgets" ? ["Budgets", "Events"] : [table];
       try {
         const result = await Promise.all(tables.map(async (name) => {
-          const res = await fetch(`/api/airtable?table=${encodeURIComponent(name)}&pageSize=100`);
+          const res = await fetch(`/api/airtable?table=${encodeURIComponent(name)}&pageSize=100&resolveLinks=1${name === "Events" ? "&financialSummary=1" : ""}`);
           if (!res.ok) throw new Error((await res.json()).error || "Unable to reach Airtable");
           const data = await res.json();
-          return (data.records || []).map((record: RecordRow) => ({ ...record, _table: name }));
+          return { records: (data.records || []).map((record: RecordRow) => ({ ...record, _table: name })), financialTotals: name === "Events" ? data.financialTotals : undefined };
         }));
-        if (!cancelled) setRecords(result.flat());
+        if (!cancelled) {
+          setRecords(result.flatMap(entry => entry.records));
+          const totals = result.find(entry => entry.financialTotals)?.financialTotals;
+          setFinancialTotals(totals || { revenueReceived: 0, outstanding: 0 });
+        }
       } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load Airtable"); }
       finally { if (!cancelled) setLoading(false); }
     }
@@ -97,6 +130,8 @@ export default function EventArt() {
     setEditing(null); setNotice("Saved directly to Airtable.");
     setTimeout(() => setNotice(""), 3000);
   }
+  async function catalogUpdate(record:RecordRow,fields:Record<string,unknown>){const res=await fetch("/api/airtable",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:"Service Catalog",id:record.id,fields})});if(!res.ok){setNotice("Unable to update service.");return}setNotice("Service Catalog updated.");setRefreshKey(key=>key+1)}
+  async function duplicateService(record:RecordRow){const fields={...record.fields,"Service Name":`${shown(record.fields["Service Name"])} Copy`};delete fields.Image;const res=await fetch("/api/airtable",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:"Service Catalog",requestId:`catalog-${Date.now()}`,fields})});if(!res.ok){setNotice("Unable to duplicate service.");return}setNotice("Service duplicated.");setRefreshKey(key=>key+1)}
 
   async function remove(record: RecordRow, recordTable = table) {
     const name = shown(record.fields[displayFields[recordTable]?.[0] || "Budget Name"]);
@@ -113,14 +148,14 @@ export default function EventArt() {
   return (
     <main className="app-shell">
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
-        <div className="brand"><img src="/eventart-logo.jpeg" alt="EventArt" /><div><strong>EventArt</strong><span>Luxury Event Design & Styling</span></div></div>
-        <nav>{sections.map(([label]) => <button key={label} className={active === label ? "active" : ""} onClick={() => { setActive(label); setMobileNav(false); }}><span className="nav-dot" />{label}</button>)}</nav>
+        <div className="brand"><img src="/eventart-logo-transparent.png" alt="EventArt" /><div><strong>EventArt</strong><span>Luxury Event Design & Styling</span></div></div>
+        <nav className="sidebar-nav"><NavButton label="Dashboard" active={active} select={(label)=>{setActive(label);setMobileNav(false)}}/>{navGroups.map(group=><section className="nav-group" key={group.label}><h2>{group.label}</h2>{group.items.map(label=><NavButton key={label} label={label} active={active} select={(next)=>{setActive(next);setMobileNav(false)}}/>)}</section>)}</nav>
         <div className="side-footer"><span className="online-dot" /> Airtable connected<small>Version 1.0</small></div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
-          <div className="header-brand"><img src="/eventart-logo.jpeg" alt="" /><strong>EventArt</strong></div>
+          <div className="header-brand"><img src="/eventart-logo-transparent.png" alt="" /><strong>EventArt</strong></div>
           <button className="menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open menu">☰</button>
           <div className="search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your workspace…" /></div>
           <div className="top-actions"><button className="icon-button" aria-label="Notifications">◌<i /></button><div className="avatar">MP</div><div className="profile"><strong>Maritza Paultre</strong><span>Lead Planner</span></div></div>
@@ -128,9 +163,9 @@ export default function EventArt() {
 
         <div className={budgetEvent ? "content budget-content" : "content"}>
           {budgetEvent ? <EventWorkspace event={budgetEvent} initialTab={workspaceTab} onBack={() => setBudgetEvent(null)} /> : <>
-          <div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? "Welcome back, Maritza" : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : `Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>
+          {mode!=="design"&&<div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? "Welcome back, Maritza" : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : `Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>}
           {notice && <div className="notice">{notice}</div>}
-          {loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} payments={payments} timeline={timeline} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={(event,tab) => { setWorkspaceTab(tab); setBudgetEvent(event); }} onDelete={budget => remove(budget,"Budgets")} /> : <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={(event) => { setWorkspaceTab("Overview"); setBudgetEvent(event); }} />}
+          {mode === "design" ? <DesignStudio onOpenEvent={(event)=>{setWorkspaceTab("Design Studio");setBudgetEvent(event)}}/> : loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} timeline={timeline} financialTotals={financialTotals} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={(event,tab) => { setWorkspaceTab(tab); setBudgetEvent(event); }} onDelete={budget => remove(budget,"Budgets")} /> : mode==="catalog"?<CatalogPage records={records} onEdit={setEditing} onDuplicate={duplicateService} onArchive={record=>catalogUpdate(record,{Active:false})} onDelete={record=>remove(record,"Service Catalog")}/>: <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={(event) => { setWorkspaceTab("Overview"); setBudgetEvent(event); }} />}
           </>}
         </div>
       </section>
@@ -141,16 +176,15 @@ export default function EventArt() {
   );
 }
 
+function NavButton({label,active,select}:{label:string;active:string;select:(label:string)=>void}){return <button className={active===label?"active":""} onClick={()=>select(label)}><span className="nav-icon" aria-hidden="true"/>{label}</button>}
 function Loading() { return <div className="loading-grid">{[1,2,3,4].map((n) => <div className="skeleton" key={n} />)}</div>; }
-function Empty({ error }: { error: string }) { return <div className="empty"><img src="/eventart-logo.jpeg" alt="EventArt" /><h2>We couldn't load this page.</h2><p>{error}</p><span>Please refresh and try again.</span></div>; }
+function Empty({ error }: { error: string }) { return <div className="empty"><img src="/eventart-logo-transparent.png" alt="EventArt" /><h2>We couldn't load this page.</h2><p>{error}</p><span>Please refresh and try again.</span></div>; }
 
-function Dashboard({ events, payments, timeline }: { events: RecordRow[]; payments: RecordRow[]; timeline: RecordRow[] }) {
+function Dashboard({ events, timeline, financialTotals }: { events: RecordRow[]; timeline: RecordRow[]; financialTotals: { revenueReceived: number; outstanding: number } }) {
   const booked = events.filter((e) => ["Contract Signed", "Deposit Paid", "Planning", "Design Approved"].includes(String(e.fields["Event Status"]))).length;
-  const revenue = payments.filter((p) => p.fields["Payment Status"] === "Paid").reduce((a, p) => a + Number(p.fields["Payment Amount"] || 0), 0);
-  const outstanding = events.reduce((a, e) => a + Number(e.fields["Balance Due"] || 0), 0);
   const upcoming = [...events].filter((e) => e.fields["Ceremony Date & Time"]).sort((a,b) => String(a.fields["Ceremony Date & Time"]).localeCompare(String(b.fields["Ceremony Date & Time"]))).slice(0,4);
   return <>
-    <div className="metrics"><Metric label="Active events" value={String(booked || events.length)} note="Currently in your pipeline" /><Metric label="Revenue received" value={money(revenue)} note="Paid transactions" /><Metric label="Outstanding" value={money(outstanding)} note="Across all events" /><Metric label="Open tasks" value={String(timeline.filter((t) => t.fields.Status !== "Completed").length)} note="Timeline items remaining" /></div>
+    <div className="metrics"><Metric label="Active events" value={String(booked || events.length)} note="Currently in your pipeline" /><Metric label="Revenue received" value={money(financialTotals.revenueReceived)} note="Paid transactions" /><Metric label="Outstanding" value={money(financialTotals.outstanding)} note="Across active events" /><Metric label="Open tasks" value={String(timeline.filter((t) => t.fields.Status !== "Completed").length)} note="Timeline items remaining" /></div>
     <div className="dashboard-grid"><section className="card span2"><CardHead title="Upcoming events" /><div className="event-list">{upcoming.length ? upcoming.map((e) => <div className="event-row" key={e.id}><div className="date-tile"><b>{new Date(String(e.fields["Ceremony Date & Time"])).toLocaleDateString("en-CA", { day: "2-digit" })}</b><span>{new Date(String(e.fields["Ceremony Date & Time"])).toLocaleDateString("en-CA", { month: "short" }).toUpperCase()}</span></div><div className="event-main"><strong>{shown(e.fields["Event Name"])}</strong><span>{shown(e.fields["Venue Name"])}</span></div><span className="pill">{shown(e.fields["Event Status"])}</span><span className="chev">›</span></div>) : <p className="muted">No upcoming events found.</p>}</div></section>
     <section className="card"><CardHead title="Today’s focus" /><div className="focus-list">{timeline.slice(0,5).map((t) => <label key={t.id}><span className={t.fields.Status === "Completed" ? "check checked" : "check"}>✓</span><span><strong>{shown(t.fields["Timeline Item"])}</strong><small>{shown(t.fields.Category)} · {shown(t.fields.Priority)} priority</small></span></label>)}{!timeline.length && <p className="muted">No timeline items yet.</p>}</div></section></div>
   </>;
@@ -177,9 +211,11 @@ function BudgetsPage({ records, query, open, onDelete }: { records: RecordRow[];
   return <section className="table-card budgets-list"><div className="table-tools"><span><b>{rows.length}</b> budgets and proposals</span><label className="status-filter">Status<select value={status} onChange={e => setStatus(e.target.value)}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label></div><div className="table-wrap"><table><thead><tr>{["Budget Name","Event","Status","Proposal Number","Proposal Date","Total Client Price","Deposit Required","Remaining Balance","Actions"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(({ budget, event }) => <tr key={budget.id}><td><b>{shown(budget.fields["Budget Name"])}</b></td><td>{event ? shown(event.fields["Event Name"]) : "Linked event unavailable"}</td><td><span className="pill">{shown(budget.fields.Status)}</span></td><td>{shown(budget.fields["Proposal Number"])}</td><td>{shown(budget.fields["Proposal Date"])}</td><td>{money(budget.fields["Total Client Price"])}</td><td>{money(budget.fields["Deposit Required"])}</td><td>{money(budget.fields["Remaining Balance"])}</td><td className="budget-list-actions"><button disabled={!event} onClick={() => event && open(event,"Budget & Proposal")}>Open Budget</button><button disabled={!event} onClick={() => event && open(event,"Overview")}>Open related Event</button><button className="danger" onClick={() => onDelete(budget)}>Delete</button></td></tr>)}</tbody></table>{!rows.length && <div className="workspace-empty"><h3>No matching budgets</h3><p>Try another search or status filter.</p></div>}</div></section>;
 }
 
+function CatalogPage({records,onEdit,onDuplicate,onArchive,onDelete}:{records:RecordRow[];onEdit:(record:RecordRow)=>void;onDuplicate:(record:RecordRow)=>void;onArchive:(record:RecordRow)=>void;onDelete:(record:RecordRow)=>void}){const [search,setSearch]=useState("");const [category,setCategory]=useState("All");const [eventType,setEventType]=useState("All");const [active,setActive]=useState("All");const [sort,setSort]=useState("Display Order");const categories=["All",...new Set(records.map(record=>String(record.fields.Category||"")).filter(Boolean))];const eventTypes=["All",...new Set(records.flatMap(record=>Array.isArray(record.fields["Event Types"])?record.fields["Event Types"] as string[]:[]))];const rows=[...records].filter(record=>{const fields=record.fields;return JSON.stringify(fields).toLowerCase().includes(search.toLowerCase())&&(category==="All"||fields.Category===category)&&(eventType==="All"||(Array.isArray(fields["Event Types"])&&fields["Event Types"].includes(eventType)))&&(active==="All"||Boolean(fields.Active)===(active==="Active"))}).sort((a,b)=>sort==="Price"?Number(a.fields["Standard Unit Price"]||0)-Number(b.fields["Standard Unit Price"]||0):sort==="Display Order"?Number(a.fields["Display Order"]||0)-Number(b.fields["Display Order"]||0):String(a.fields[sort]||"").localeCompare(String(b.fields[sort]||"")));return <section className="catalog-page"><div className="catalog-tools"><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search services…"/><select value={category} onChange={event=>setCategory(event.target.value)}>{categories.map(value=><option key={value}>{value}</option>)}</select><select value={eventType} onChange={event=>setEventType(event.target.value)}>{eventTypes.map(value=><option key={value}>{value}</option>)}</select><select value={active} onChange={event=>setActive(event.target.value)}><option>All</option><option>Active</option><option>Inactive</option></select><select value={sort} onChange={event=>setSort(event.target.value)}><option>Display Order</option><option>Service Name</option><option>Category</option><option>Price</option></select></div><div className="service-cards">{rows.map(record=><article key={record.id}><span>{shown(record.fields.Category)}</span><h3>{shown(record.fields["Service Name"])}</h3><p>{shown(record.fields.Description)}</p><div><b>{new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(Number(record.fields["Standard Unit Price"]||0))}</b><small>Cost {new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(Number(record.fields["Standard Unit Cost"]||0))}</small></div><p>{record.fields.Taxable?"Taxable":"Not taxable"} · {record.fields["Optional by Default"]?"Optional":"Standard"} · {record.fields.Active?"Active":"Inactive"}</p><footer><button onClick={()=>onEdit(record)}>Edit</button><button onClick={()=>onDuplicate(record)}>Duplicate</button>{record.fields.Active&&<button onClick={()=>onArchive(record)}>Deactivate</button>}<button className="danger" onClick={()=>onDelete(record)}>Delete</button></footer></article>)}</div></section>}
+
 function RecordTable({ table, records, onEdit, onDelete, onBudget }: { table: string; records: RecordRow[]; onEdit: (r: RecordRow) => void; onDelete: (r: RecordRow) => void; onBudget: (r: RecordRow) => void }) {
   const fields = displayFields[table] || [];
-  return <section className="table-card"><div className="table-tools"><span><b>{records.length}</b> records synced from Airtable</span></div><div className="table-wrap"><table><thead><tr>{fields.map((f) => <th key={f}>{f}</th>)}<th /></tr></thead><tbody>{records.map((r) => <tr key={r.id}>{fields.map((f) => <td key={f}>{f === statusField[table] ? <span className="pill">{shown(r.fields[f])}</span> : shown(r.fields[f])}</td>)}<td className="row-actions">{table === "Events" && <button className="budget-link" onClick={() => onBudget(r)}>Open Workspace</button>}<button className="edit" onClick={() => onEdit(r)}>Edit</button><button className="danger" onClick={() => onDelete(r)}>Delete</button></td></tr>)}</tbody></table>{!records.length && <div className="no-records">No matching records found in Airtable.</div>}</div></section>;
+  return <section className="table-card"><div className="table-tools"><span><b>{records.length}</b> records synced from Airtable</span></div><div className="table-wrap"><table><thead><tr>{fields.map((f) => <th key={f}>{f === "Rental Price" ? "Rental Price per Unit" : f}</th>)}<th /></tr></thead><tbody>{records.map((r) => <tr key={r.id}>{fields.map((f) => <td key={f}>{table==="Inventory"&&f==="Photo"?<InventoryThumbnail value={r.fields.Photo} name={r.fields["Item Name"]}/>:f === statusField[table] ? <span className="pill">{tableValue(r,f)}</span> : tableValue(r,f)}</td>)}<td className="row-actions">{table === "Events" && <button className="budget-link" onClick={() => onBudget(r)}>Open Workspace</button>}<button className="edit" onClick={() => onEdit(r)}>Edit</button><button className="danger" onClick={() => onDelete(r)}>Delete</button></td></tr>)}</tbody></table>{!records.length && <div className="no-records">No matching records found in Airtable.</div>}</div></section>;
 }
 
 function Reports({ payments }: { payments: RecordRow[] }) {
@@ -187,7 +223,7 @@ function Reports({ payments }: { payments: RecordRow[] }) {
   const pending = payments.filter((p) => ["Pending", "Overdue", "Partially Paid"].includes(String(p.fields["Payment Status"]))).reduce((a,p) => a + Number(p.fields["Payment Amount"] || 0), 0);
   const methods = ["E-Transfer", "Credit Card", "Cash", "Bank Transfer"].map((m) => ({ name:m, value: payments.filter((p) => p.fields["Payment Method"] === m).reduce((a,p) => a + Number(p.fields["Payment Amount"] || 0), 0) }));
   const max = Math.max(1, ...methods.map((m) => m.value));
-  return <div className="report-grid"><div className="report-brand"><img src="/eventart-logo.jpeg" alt="EventArt"/><div><strong>EventArt</strong><span>Luxury Event Design & Styling</span></div></div><div className="metrics report-metrics"><Metric label="Total collected" value={money(paid)} note="Paid transactions" /><Metric label="Pending payments" value={money(pending)} note="Requires follow-up" /></div><section className="card span2"><CardHead title="Revenue by payment method" /><div className="bars">{methods.map((m) => <div key={m.name}><span>{m.name}</span><i><b style={{ width: `${(m.value/max)*100}%` }} /></i><strong>{money(m.value)}</strong></div>)}</div></section></div>;
+  return <div className="report-grid"><div className="report-brand"><img src="/eventart-logo-transparent.png" alt="EventArt"/><div><strong>EventArt</strong><span>Luxury Event Design & Styling</span></div></div><div className="metrics report-metrics"><Metric label="Total collected" value={money(paid)} note="Paid transactions" /><Metric label="Pending payments" value={money(pending)} note="Requires follow-up" /></div><section className="card span2"><CardHead title="Revenue by payment method" /><div className="bars">{methods.map((m) => <div key={m.name}><span>{m.name}</span><i><b style={{ width: `${(m.value/max)*100}%` }} /></i><strong>{money(m.value)}</strong></div>)}</div></section></div>;
 }
 
 function Calendar({ records }: { records: RecordRow[] }) {

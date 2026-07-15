@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { calculateFinancialSummary, type FinancialRecord } from "./financials";
 
 function cleanEnv(value: string | undefined) {
   return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim();
@@ -8,10 +9,10 @@ function cleanEnv(value: string | undefined) {
 // .env files are available through import.meta.env there, not process.env.
 const BASE_ID = cleanEnv(import.meta.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE_ID) || "appcRlgcd7lcTzpFS";
 const TOKEN = cleanEnv(import.meta.env.AIRTABLE_TOKEN || process.env.AIRTABLE_TOKEN);
-const allowed = new Set(["Clients", "Events", "Inventory", "Rental Orders", "Payments", "Timeline", "Guests", "Vendors", "Seating Tables", "Design Board", "Budgets", "Budget Items"]);
+const allowed = new Set(["Clients", "Events", "Inventory", "Rental Orders", "Payments", "Timeline", "Guests", "Vendors", "Seating Tables", "Design Board", "Budgets", "Budget Items", "Service Catalog"]);
 const writable: Record<string, Set<string>> = {
   Clients: new Set(["Client Name", "Email", "Phone number", "Client Type", "Status", "Notes"]),
-  Events: new Set(["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Venue Address", "Guest Count", "Theme", "Color Palette", "Budget", "Total Contract", "Lead Planner", "Deposit Paid"]),
+  Events: new Set(["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Venue Address", "Guest Count", "Theme", "Color Palette", "Budget", "Total Contract", "Lead Planner", "Deposit Paid", "Seating QR Code", "Seating Canva Link"]),
   Inventory: new Set(["Item Name", "Category", "Subcategory", "Photo", "Quantity Owned", "Quantity Available", "Rental Price", "Replacement Cost", "Security Deposit", "Warehouse", "Shelf/Bin", "Condition", "Cleaning Status", "Notes", "Style Tags", "Available for Rental"]),
   Payments: new Set(["Event", "Client", "Payment Type", "Payment Amount", "Payment Date", "Due Date", "Payment Method", "Invoice Number", "Payment Status", "Notes"]),
   "Rental Orders": new Set(["Event", "Client", "Rental Item", "Rental Start Date", "Rental End Date", "Quantity", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Discount", "Order Status", "Notes", "Return Condition"]),
@@ -22,9 +23,23 @@ const writable: Record<string, Set<string>> = {
   "Design Board": new Set(["Design Title", "Event", "Design Category", "Design File", "Preview Image", "Design Link", "Version", "Approval Status", "Date Submitted", "Approval Date", "Client Comments", "Internal Notes", "Visible to Client"]),
   Budgets: new Set(["Budget Name", "Event", "Status", "Proposal Number", "Proposal Date", "Expiration Date", "Introduction", "Scope of Services", "Event Discount", "Contingency Type", "Contingency Value", "Deposit Required", "Payment Schedule", "Terms and Conditions", "Proposal Notes"]),
   "Budget Items": new Set(["Item / Service", "Budget", "Event", "Category", "Custom Category", "Description", "Quantity", "Unit Cost", "Unit Price", "Discount", "Taxable", "Tax Rate", "Vendor", "Notes", "Optional Item", "Included in Proposal", "Display Order"]),
+  "Service Catalog": new Set(["Service Name", "Category", "Description", "Standard Unit Cost", "Standard Unit Price", "Taxable", "Tax Rate", "Optional by Default", "Active", "Event Types", "Image", "Internal Notes", "Display Order"]),
 };
 const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order", "Guest Count", "Budget", "Total Contract", "Deposit Paid", "Payment Amount", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Seat Number", "Children", "Total Fee", "Amount Paid", "Table Number", "Capacity", "Version", "Quantity Owned", "Quantity Available", "Replacement Cost"]);
 const recentRequests = new Map<string, number>();
+const linkDefinitions: Record<string, Record<string, { table: string; primary: string }>> = {
+  Clients: { "Events 2": { table: "Events", primary: "Event Name" } },
+  Events: { Clients: { table: "Clients", primary: "Client Name" } },
+  "Rental Orders": { Event: { table: "Events", primary: "Event Name" }, Client: { table: "Clients", primary: "Client Name" }, "Rental Item": { table: "Inventory", primary: "Item Name" } },
+  Payments: { Event: { table: "Events", primary: "Event Name" }, Client: { table: "Clients", primary: "Client Name" } },
+  Timeline: { Event: { table: "Events", primary: "Event Name" } },
+  Guests: { Event: { table: "Events", primary: "Event Name" }, "Seating Chart": { table: "Seating Tables", primary: "Table Name" } },
+  Vendors: { Event: { table: "Events", primary: "Event Name" } },
+  "Seating Tables": { Event: { table: "Events", primary: "Event Name" }, "Assigned Guests": { table: "Guests", primary: "Full Name" } },
+  "Design Board": { Event: { table: "Events", primary: "Event Name" } },
+  Budgets: { Event: { table: "Events", primary: "Event Name" } },
+  "Budget Items": { Budget: { table: "Budgets", primary: "Budget Name" }, Event: { table: "Events", primary: "Event Name" }, Vendor: { table: "Vendors", primary: "Vendor Name" } },
+};
 
 function headers() { return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }; }
 function check(table: string | null) {
@@ -60,6 +75,28 @@ function safeFields(table: string, input: unknown) {
   return output;
 }
 
+async function guestSeatingError(fields: Record<string, unknown>, recordId: string | undefined, allowOverbook: boolean) {
+  const requestedTable = Array.isArray(fields["Seating Chart"]) ? String(fields["Seating Chart"][0] || "") : "";
+  if (!requestedTable) return null;
+  if (!/^rec[A-Za-z0-9]{14}$/.test(requestedTable)) return "The assigned table is not valid.";
+  let eventId = Array.isArray(fields.Event) ? String(fields.Event[0] || "") : "";
+  if (!eventId && recordId) {
+    const guestResponse = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/Guests/${encodeURIComponent(recordId)}`, { headers: headers(), cache: "no-store" });
+    const guest = await guestResponse.json() as { fields?: Record<string, unknown> };
+    eventId = Array.isArray(guest.fields?.Event) ? String(guest.fields?.Event[0] || "") : "";
+  }
+  if (!eventId) return "Select the guest's event before assigning a table.";
+  const tableResponse = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent("Seating Tables")}/${encodeURIComponent(requestedTable)}`, { headers: headers(), cache: "no-store" });
+  const seatingTable = await tableResponse.json() as { fields?: Record<string, unknown> };
+  if (!tableResponse.ok) return "The selected seating table could not be loaded.";
+  const tableEvents = Array.isArray(seatingTable.fields?.Event) ? seatingTable.fields?.Event as string[] : [];
+  if (!tableEvents.includes(eventId)) return "The assigned table must belong to the guest's event.";
+  const assigned = Array.isArray(seatingTable.fields?.["Assigned Guests"]) ? seatingTable.fields?.["Assigned Guests"] as string[] : [];
+  const capacity = Number(seatingTable.fields?.Capacity || 0);
+  if (capacity > 0 && assigned.length >= capacity && !assigned.includes(recordId || "") && !allowOverbook) return `${String(seatingTable.fields?.["Table Name"] || "This table")} is full. Confirm overbooking to continue.`;
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const table = request.nextUrl.searchParams.get("table");
   const error = check(table);
@@ -72,6 +109,39 @@ export async function GET(request: NextRequest) {
     const response = await fetch(url, { headers: headers(), cache: "no-store" });
     const data: unknown = await response.json();
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
+    if (request.nextUrl.searchParams.get("resolveLinks") === "1" && linkDefinitions[table!]) {
+      const payload = data as { records?: Array<{ id: string; fields: Record<string, unknown>; createdTime?: string }> };
+      const definitions = linkDefinitions[table!];
+      const targetTables = [...new Set(Object.values(definitions).map(definition => definition.table))];
+      const targetRecords = new Map<string, Map<string, string>>();
+      await Promise.all(targetTables.map(async targetTable => {
+        const targetResponse = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(targetTable)}?pageSize=100`, { headers: headers(), cache: "no-store" });
+        const targetData = await targetResponse.json() as { records?: Array<{ id: string; fields: Record<string, unknown> }> };
+        const primary = Object.values(definitions).find(definition => definition.table === targetTable)!.primary;
+        targetRecords.set(targetTable, new Map((targetData.records || []).map(record => [record.id, String(record.fields[primary] || "").replaceAll("_", " ").replace(/\s+/g, " ").trim()])))
+      }));
+      payload.records = (payload.records || []).map(record => {
+        const displayFields: Record<string, string> = {};
+        for (const [field, definition] of Object.entries(definitions)) {
+          const ids = Array.isArray(record.fields[field]) ? record.fields[field] as string[] : [];
+          if (ids.length) displayFields[field] = ids.map(id => targetRecords.get(definition.table)?.get(id) || (field === "Event" ? "Unknown event" : "Unknown linked record")).join(", ");
+        }
+        return { ...record, displayFields };
+      });
+    }
+    if (table === "Events" && request.nextUrl.searchParams.get("financialSummary") === "1") {
+      const payload = data as { records?: FinancialRecord[]; financialTotals?: { revenueReceived: number; outstanding: number } };
+      const [budgetResponse, paymentResponse] = await Promise.all([
+        fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/Budgets?pageSize=100`, { headers: headers(), cache: "no-store" }),
+        fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/Payments?pageSize=100`, { headers: headers(), cache: "no-store" }),
+      ]);
+      const budgetData = await budgetResponse.json() as { records?: FinancialRecord[] };
+      const paymentData = await paymentResponse.json() as { records?: FinancialRecord[] };
+      if (!budgetResponse.ok || !paymentResponse.ok) return NextResponse.json({ error: { type: "FINANCIAL_SUMMARY_ERROR", message: "Unable to calculate the live event balance" } }, { status: 502 });
+      const summary = calculateFinancialSummary(payload.records || [], budgetData.records || [], paymentData.records || []);
+      payload.records = summary.records;
+      payload.financialTotals = summary.financialTotals;
+    }
     return NextResponse.json(data);
   } catch {
     const safe = { type: "NETWORK_ERROR", message: "Unable to connect to Airtable" };
@@ -81,7 +151,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const { table, id, fields } = await request.json();
+  const { table, id, fields, allowOverbook } = await request.json();
   const error = check(table);
   if (error || !id || !fields) return NextResponse.json({ error: error || "Record and fields are required" }, { status: 400 });
   const url = `https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}/${encodeURIComponent(id)}`;
@@ -89,6 +159,7 @@ export async function PATCH(request: NextRequest) {
   let validated: Record<string, unknown> | null;
   try { validated = safeFields(table, fields); } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid values" }, { status: 400 }); }
   if (!validated || !Object.keys(validated).length) return NextResponse.json({ error: "No approved fields were supplied" }, { status: 400 });
+  if (table === "Guests") { const seatingError = await guestSeatingError(validated, id, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
   const response = await fetch(url, { method: "PATCH", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
     const data: unknown = await response.json();
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
@@ -101,7 +172,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { table, fields, requestId } = await request.json();
+  const { table, fields, requestId, allowOverbook } = await request.json();
   const error = check(table);
   if (error) return NextResponse.json({ error }, { status: 400 });
   if (!writable[table]) return NextResponse.json({ error: "Record creation is not enabled for this table" }, { status: 403 });
@@ -114,6 +185,7 @@ export async function POST(request: NextRequest) {
   let validated: Record<string, unknown> | null;
   try { validated = safeFields(table, fields); } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid values" }, { status: 400 }); }
   if (!validated || !Object.keys(validated).length) return NextResponse.json({ error: "No approved fields were supplied" }, { status: 400 });
+  if (table === "Guests") { const seatingError = await guestSeatingError(validated, undefined, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
   try {
     const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`, { method: "POST", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
     const data: unknown = await response.json();
