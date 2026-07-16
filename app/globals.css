@@ -256,3 +256,89 @@
 .proposal-document .proposal-interior>footer>span:last-child{margin-left:auto}
 .proposal-footer-logo{display:block;width:auto;height:22px;object-fit:contain;flex:0 0 auto}
 @media print{#proposal-print-root .proposal-footer-logo{display:block!important;visibility:visible!important;width:auto!important;height:22px!important;object-fit:contain!important}}
+
+/* Application readability scale. Proposal preview/print/PDF is deliberately excluded. */
+body:not(:has(#proposal-print-root)) .app-shell{font-size:16px;line-height:1.5}
+body:not(:has(#proposal-print-root)) .sidebar nav button{min-height:48px;padding:11px 14px;font-size:16px;line-height:1.25}
+body:not(:has(#proposal-print-root)) .nav-group h2,
+body:not(:has(#proposal-print-root)) .brand span,
+body:not(:has(#proposal-print-root)) .side-footer,
+body:not(:has(#proposal-print-root)) .side-footer small{font-size:13px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .brand strong{font-size:24px}
+body:not(:has(#proposal-print-root)) .search input,
+body:not(:has(#proposal-print-root)) .search input::placeholder{font-size:16px}
+body:not(:has(#proposal-print-root)) .profile strong,
+body:not(:has(#proposal-print-root)) .profile span{font-size:13px}
+body:not(:has(#proposal-print-root)) .page-head h1{font-size:clamp(42px,4vw,48px);line-height:1.08}
+body:not(:has(#proposal-print-root)) .page-head p{font-size:16px;line-height:1.5}
+body:not(:has(#proposal-print-root)) .eyebrow{font-size:13px!important;line-height:1.35}
+body:not(:has(#proposal-print-root)) .content h2{font-size:clamp(28px,2.3vw,32px);line-height:1.2}
+body:not(:has(#proposal-print-root)) .content h3{font-size:clamp(22px,1.8vw,24px);line-height:1.25}
+body:not(:has(#proposal-print-root)) .card-head h2,
+body:not(:has(#proposal-print-root)) .service-cards h3,
+body:not(:has(#proposal-print-root)) .kanban h3{font-size:23px;line-height:1.25}
+body:not(:has(#proposal-print-root)) .content p,
+body:not(:has(#proposal-print-root)) .content li,
+body:not(:has(#proposal-print-root)) .content dd,
+body:not(:has(#proposal-print-root)) .content td{font-size:16px;line-height:1.5}
+body:not(:has(#proposal-print-root)) .content small,
+body:not(:has(#proposal-print-root)) .content .muted,
+body:not(:has(#proposal-print-root)) .content .eyebrow,
+body:not(:has(#proposal-print-root)) .content .pill,
+body:not(:has(#proposal-print-root)) .content .notice,
+body:not(:has(#proposal-print-root)) .content .workspace-empty,
+body:not(:has(#proposal-print-root)) .content .quiet-note{font-size:13px;line-height:1.45}
+body:not(:has(#proposal-print-root)) .metric{padding:24px}
+body:not(:has(#proposal-print-root)) .metric span,
+body:not(:has(#proposal-print-root)) .metric small{font-size:13px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .metric strong{font-size:32px;line-height:1.15}
+body:not(:has(#proposal-print-root)) .card{padding:24px}
+body:not(:has(#proposal-print-root)) .event-main strong,
+body:not(:has(#proposal-print-root)) .focus-list strong,
+body:not(:has(#proposal-print-root)) .seating-guest-list b,
+body:not(:has(#proposal-print-root)) .unassigned-guests article b{font-size:16px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .event-main span,
+body:not(:has(#proposal-print-root)) .focus-list small,
+body:not(:has(#proposal-print-root)) .seating-guest-list span,
+body:not(:has(#proposal-print-root)) .unassigned-guests article span{font-size:13px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .table-tools{min-height:60px;font-size:14px}
+body:not(:has(#proposal-print-root)) .app-shell table th{height:60px;padding:16px 14px;font-size:15px;line-height:1.3}
+body:not(:has(#proposal-print-root)) .app-shell table td{height:60px;padding:16px 14px;font-size:16px;line-height:1.45}
+body:not(:has(#proposal-print-root)) .app-shell label{font-size:14px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .app-shell label span{font-size:14px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .app-shell input:not([type="checkbox"]):not([type="radio"]),
+body:not(:has(#proposal-print-root)) .app-shell select{min-height:48px;font-size:16px;line-height:1.35}
+body:not(:has(#proposal-print-root)) .app-shell textarea{min-height:96px;font-size:16px;line-height:1.5}
+body:not(:has(#proposal-print-root)) .app-shell button{min-height:48px;font-size:16px;line-height:1.25}
+body:not(:has(#proposal-print-root)) .app-shell .gold-button{min-height:50px;padding:12px 20px;font-size:17px}
+body:not(:has(#proposal-print-root)) .weekdays span,
+body:not(:has(#proposal-print-root)) .calendar .days b,
+body:not(:has(#proposal-print-root)) .calendar .days span,
+body:not(:has(#proposal-print-root)) .kanban section>header,
+body:not(:has(#proposal-print-root)) .kanban article small,
+body:not(:has(#proposal-print-root)) .kanban article div{font-size:14px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .seating-table-card,
+body:not(:has(#proposal-print-root)) .unassigned-guests,
+body:not(:has(#proposal-print-root)) .service-cards article{padding:24px}
+body:not(:has(#proposal-print-root)) .seating-table-card>header span,
+body:not(:has(#proposal-print-root)) .unassigned-guests>div>span,
+body:not(:has(#proposal-print-root)) .seating-table-card dt{font-size:13px;line-height:1.4}
+body:not(:has(#proposal-print-root)) .seating-table-card dd{font-size:20px}
+body:not(:has(#proposal-print-root)) .brand-page h1,
+body:not(:has(#proposal-print-root)) .login-page h1,
+body:not(:has(#proposal-print-root)) .public-seating h1{font-size:clamp(42px,5vw,48px);line-height:1.1}
+body:not(:has(#proposal-print-root)) .brand-page p,
+body:not(:has(#proposal-print-root)) .login-page p,
+body:not(:has(#proposal-print-root)) .public-seating p{font-size:16px;line-height:1.5}
+body:not(:has(#proposal-print-root)) .brand-page button,
+body:not(:has(#proposal-print-root)) .brand-page a,
+body:not(:has(#proposal-print-root)) .login-page button,
+body:not(:has(#proposal-print-root)) .public-seating button,
+body:not(:has(#proposal-print-root)) .public-seating input{min-height:48px;font-size:16px}
+@media(max-width:720px){
+ body:not(:has(#proposal-print-root)) .page-head h1{font-size:clamp(36px,10vw,44px)}
+ body:not(:has(#proposal-print-root)) .content h2{font-size:28px}
+ body:not(:has(#proposal-print-root)) .content h3{font-size:22px}
+ body:not(:has(#proposal-print-root)) .metric{padding:20px}
+ body:not(:has(#proposal-print-root)) .card{padding:20px}
+}
