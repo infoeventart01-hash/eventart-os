@@ -1,7 +1,7 @@
 import { NextRequest,NextResponse } from "next/server";
 
-const BASE_ID=(import.meta.env.AIRTABLE_BASE_ID||process.env.AIRTABLE_BASE_ID||"").trim();
-const TOKEN=(import.meta.env.AIRTABLE_TOKEN||process.env.AIRTABLE_TOKEN||"").trim();
+const BASE_ID=(process.env.AIRTABLE_BASE_ID||"").trim();
+const TOKEN=(process.env.AIRTABLE_TOKEN||"").trim();
 const allowedUploads:Record<string,Set<string>>={
  Inventory:new Set(["Photo"]),
  "Design Board":new Set(["Design File","Preview Image"]),

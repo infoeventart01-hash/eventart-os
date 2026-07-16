@@ -4,8 +4,8 @@ import QRCode from "qrcode";
 type AirtableAttachment = { id?: string; filename?: string; url?: string; type?: string };
 type AirtableRecord = { id?: string; fields?: Record<string, unknown> };
 
-const BASE_ID = (import.meta.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE_ID || "").trim();
-const TOKEN = (import.meta.env.AIRTABLE_TOKEN || process.env.AIRTABLE_TOKEN || "").trim();
+const BASE_ID = (process.env.AIRTABLE_BASE_ID || "").trim();
+const TOKEN = (process.env.AIRTABLE_TOKEN || "").trim();
 const QR_FIELD = "Seating QR Code";
 
 function headers() { return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }; }

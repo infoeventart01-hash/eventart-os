@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BASE_ID=(import.meta.env.AIRTABLE_BASE_ID||process.env.AIRTABLE_BASE_ID||"").trim();
-const TOKEN=(import.meta.env.AIRTABLE_TOKEN||process.env.AIRTABLE_TOKEN||"").trim();
+const BASE_ID=(process.env.AIRTABLE_BASE_ID||"").trim();
+const TOKEN=(process.env.AIRTABLE_TOKEN||"").trim();
 const INVENTORY_TABLE_ID="tbloOpso4voi5vH6h";
 const approvedFields={Category:"fldBHRtqoKKyU7EA5",Subcategory:"fldksRg2j8JH5Exs0"} as const;
 type ManagedField=keyof typeof approvedFields;
@@ -11,7 +11,7 @@ type MetaField={id:string;name:string;type:string;options?:{choices?:Choice[]}};
 function headers(){return {Authorization:`Bearer ${TOKEN}`,"Content-Type":"application/json"}}
 function configured(){return Boolean(TOKEN&&/^app[A-Za-z0-9]{14}$/.test(BASE_ID))}
 function isManagedField(value:unknown):value is ManagedField{return value==="Category"||value==="Subcategory"}
-function isAdmin(request:NextRequest){const configuredAdmins=(import.meta.env.EVENTART_ADMIN_EMAILS||process.env.EVENTART_ADMIN_EMAILS||"").toLowerCase().split(",").map(v=>v.trim()).filter(Boolean);const email=(request.headers.get("oai-authenticated-user-email")||"").toLowerCase();if(configuredAdmins.length)return configuredAdmins.includes(email);return ["127.0.0.1","localhost","::1"].includes(request.nextUrl.hostname)}
+function isAdmin(request:NextRequest){const configuredAdmins=(process.env.EVENTART_ADMIN_EMAILS||"").toLowerCase().split(",").map(v=>v.trim()).filter(Boolean);const email=(request.headers.get("oai-authenticated-user-email")||"").toLowerCase();if(configuredAdmins.length)return configuredAdmins.includes(email);return ["127.0.0.1","localhost","::1"].includes(request.nextUrl.hostname)}
 function safeError(data:unknown,status:number){const error=(data as {error?:{type?:unknown;message?:unknown}})?.error;return {type:typeof error?.type==="string"?error.type:`HTTP_${status}`,message:typeof error?.message==="string"?error.message:"Airtable could not update this select field"}}
 
 async function metadata(){const response=await fetch(`https://api.airtable.com/v0/meta/bases/${encodeURIComponent(BASE_ID)}/tables`,{headers:headers(),cache:"no-store"});const data=await response.json() as {tables?:Array<{id:string;name:string;fields:MetaField[]}>};if(!response.ok)throw Object.assign(new Error("Unable to inspect Inventory select options"),{status:response.status,data});const table=data.tables?.find(item=>item.id===INVENTORY_TABLE_ID&&item.name==="Inventory");if(!table)throw new Error("The approved Inventory table could not be verified");for(const [name,id] of Object.entries(approvedFields)){const field=table.fields.find(item=>item.id===id&&item.name===name);if(!field||field.type!=="singleSelect")throw new Error(`The approved Inventory ${name} field could not be verified`)}return table}

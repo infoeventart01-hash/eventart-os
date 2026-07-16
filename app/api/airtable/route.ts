@@ -5,10 +5,11 @@ function cleanEnv(value: string | undefined) {
   return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim();
 }
 
-// The application runs API routes inside a secure server environment. Values from
-// .env files are available through import.meta.env there, not process.env.
-const BASE_ID = cleanEnv(import.meta.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE_ID) || "appcRlgcd7lcTzpFS";
-const TOKEN = cleanEnv(import.meta.env.AIRTABLE_TOKEN || process.env.AIRTABLE_TOKEN);
+// Vinext loads local dotenv files into process.env and Cloudflare exposes
+// encrypted Worker secrets there when nodejs_compat is enabled. Avoid
+// import.meta.env so secret values are never substituted into build output.
+const BASE_ID = cleanEnv(process.env.AIRTABLE_BASE_ID);
+const TOKEN = cleanEnv(process.env.AIRTABLE_TOKEN);
 const allowed = new Set(["Clients", "Events", "Inventory", "Rental Orders", "Payments", "Timeline", "Guests", "Vendors", "Seating Tables", "Design Board", "Budgets", "Budget Items", "Service Catalog"]);
 const writable: Record<string, Set<string>> = {
   Clients: new Set(["Client Name", "Email", "Phone number", "Client Type", "Status", "Notes"]),
