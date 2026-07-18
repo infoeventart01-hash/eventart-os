@@ -11,8 +11,15 @@ export type FinancialTotals = {
 };
 
 const budgetPriority: Record<string, number> = { Approved: 0, Sent: 1, "In Review": 2, Draft: 3 };
-const receivedPaymentStatuses = new Set(["Paid"]);
-const inactiveEventStatuses = new Set(["Event Completed", "Cancelled", "Archived"]);
+// Airtable bases in use by EventArt may use any of these explicit received
+// states. Everything else (including Pending, Overdue and Refunded) is ignored.
+const receivedPaymentStatuses = new Set(["Paid", "Completed", "Received"]);
+const inactiveEventStatuses = new Set(["Completed", "Event Completed", "Cancelled", "Archived"]);
+
+function modifiedTime(record: FinancialRecord) {
+  const fields = record.fields;
+  return String(fields["Last Modified"] || fields["Last Modified Time"] || fields["Updated At"] || record.createdTime || "");
+}
 
 function linkedTo(record: FinancialRecord, eventId: string) {
   return Array.isArray(record.fields.Event) && record.fields.Event.includes(eventId);
@@ -28,7 +35,7 @@ export function calculateFinancialSummary(events: FinancialRecord[], budgets: Fi
     const selectedBudget = budgets
       .filter(budget => linkedTo(budget, event.id))
       .sort((a, b) => (budgetPriority[String(a.fields.Status)] ?? 99) - (budgetPriority[String(b.fields.Status)] ?? 99)
-        || String(b.createdTime || "").localeCompare(String(a.createdTime || "")))[0];
+        || modifiedTime(b).localeCompare(modifiedTime(a)))[0];
     const totalContract = selectedBudget
       ? amount(selectedBudget.fields["Total Client Price"])
       : amount(event.fields["Total Contract"]);

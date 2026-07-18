@@ -9,7 +9,13 @@
   "secrets": {
     "required": [
       "AIRTABLE_BASE_ID",
-      "AIRTABLE_TOKEN"
+      "AIRTABLE_TOKEN",
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "EVENTART_OWNER_EMAIL",
+      "EVENTART_APP_URL",
+      "EVENTART_PORTAL_SIGNING_SECRET"
     ]
   },
   "assets": {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
+import { requireIdentity } from "../../../../lib/auth";
 
 type AirtableAttachment = { id?: string; filename?: string; url?: string; type?: string };
 type AirtableRecord = { id?: string; fields?: Record<string, unknown> };
@@ -24,9 +25,11 @@ function filename(value: unknown) {
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ eventId: string }> }) {
+  const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;
   const { eventId } = await context.params;
   if (!TOKEN || !/^app[A-Za-z0-9]{14}$/.test(BASE_ID)) return NextResponse.json({ error: "Airtable QR storage is not configured." }, { status: 503 });
   if (!/^rec[A-Za-z0-9]{14}$/.test(eventId)) return NextResponse.json({ error: "A valid event is required to generate a QR code." }, { status: 400 });
+  if(auth.identity!.role==="team"&&!auth.identity!.eventRecordIds.includes(eventId))return NextResponse.json({error:"This event is not assigned to your account."},{status:403});
 
   try {
     const eventResponse = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/Events/${encodeURIComponent(eventId)}`, { headers: headers(), cache: "no-store" });

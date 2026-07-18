@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { calculateFinancialSummary, type FinancialRecord } from "./financials";
+import { requireIdentity, type EventArtIdentity } from "../../../lib/auth";
 
 function cleanEnv(value: string | undefined) {
-  return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim();
+  return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim() || "";
 }
 
 // Vinext loads local dotenv files into process.env and Cloudflare exposes
@@ -41,8 +42,37 @@ const linkDefinitions: Record<string, Record<string, { table: string; primary: s
   Budgets: { Event: { table: "Events", primary: "Event Name" } },
   "Budget Items": { Budget: { table: "Budgets", primary: "Budget Name" }, Event: { table: "Events", primary: "Event Name" }, Vendor: { table: "Vendors", primary: "Vendor Name" } },
 };
+const teamReadable = new Set(["Events", "Timeline", "Guests", "Vendors", "Seating Tables", "Design Board"]);
+const teamWritable = new Set(["Timeline", "Guests", "Vendors", "Seating Tables", "Design Board"]);
+function eventLinks(table:string,id:string,fields:Record<string,unknown>){if(table==="Events")return [id];return Array.isArray(fields.Event)?fields.Event.map(String):[]}
+function teamRecordAllowed(identity:EventArtIdentity,table:string,record:{id:string;fields:Record<string,unknown>}){return eventLinks(table,record.id,record.fields).some(id=>identity.eventRecordIds.includes(id))}
+async function existingRecord(table:string,id:string){const response=await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}/${encodeURIComponent(id)}`,{headers:headers(),cache:"no-store"});if(!response.ok)return null;return response.json() as Promise<{id:string;fields:Record<string,unknown>}>}
 
 function headers() { return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }; }
+type AirtablePage = { records?: Array<{ id: string; fields: Record<string, unknown>; createdTime?: string }>; offset?: string };
+
+async function payload(response: Response): Promise<unknown> {
+  const type = response.headers.get("content-type") || "";
+  if (type.includes("application/json")) return response.json().catch(() => ({}));
+  const message = (await response.text().catch(() => "")).trim();
+  return { error: { type: `HTTP_${response.status}`, message: message && message.length < 240 ? message : "Airtable request failed" } };
+}
+
+async function allRecords(table: string, pageSize = 100) {
+  const records: NonNullable<AirtablePage["records"]> = [];
+  let offset = "";
+  do {
+    const url = new URL(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`);
+    url.searchParams.set("pageSize", String(pageSize));
+    if (offset) url.searchParams.set("offset", offset);
+    const response = await fetch(url, { headers: headers(), cache: "no-store" });
+    const data = await payload(response) as AirtablePage;
+    if (!response.ok) return { response, data };
+    records.push(...(data.records || []));
+    offset = data.offset || "";
+  } while (offset);
+  return { response: new Response(null, { status: 200 }), data: { records } };
+}
 function check(table: string | null) {
   if (!TOKEN) return "Airtable token is not configured";
   if (!/^app[A-Za-z0-9]{14}$/.test(BASE_ID)) return "Airtable Base ID must start with 'app' and contain 17 characters";
@@ -99,25 +129,31 @@ async function guestSeatingError(fields: Record<string, unknown>, recordId: stri
 }
 
 export async function GET(request: NextRequest) {
+  const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const table = request.nextUrl.searchParams.get("table");
   const error = check(table);
   if (error) return NextResponse.json({ error }, { status: 400 });
+  if(identity.role==="team"&&!teamReadable.has(table!))return NextResponse.json({error:"This area is restricted to the EventArt owner."},{status:403});
   const requestedSize = Number(request.nextUrl.searchParams.get("pageSize") || 100);
   const size = Number.isFinite(requestedSize) ? Math.max(1, Math.min(requestedSize, 100)) : 100;
-  const url = new URL(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table!)}`);
-  url.searchParams.set("pageSize", String(size));
   try {
-    const response = await fetch(url, { headers: headers(), cache: "no-store" });
-    const data: unknown = await response.json();
+    const { response, data } = await allRecords(table!, size);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
+    if(identity.role==="team"){
+      const scoped=data as {records?:Array<{id:string;fields:Record<string,unknown>}>};
+      scoped.records=(scoped.records||[]).filter(record=>teamRecordAllowed(identity,table!,record)).map(record=>{
+        if(table!=="Events")return record;
+        const fields={...record.fields};["Budget","Total Contract","Deposit Paid","Balance Due","Amount Paid"].forEach(field=>delete fields[field]);return {...record,fields};
+      });
+    }
     if (request.nextUrl.searchParams.get("resolveLinks") === "1" && linkDefinitions[table!]) {
       const payload = data as { records?: Array<{ id: string; fields: Record<string, unknown>; createdTime?: string }> };
       const definitions = linkDefinitions[table!];
       const targetTables = [...new Set(Object.values(definitions).map(definition => definition.table))];
       const targetRecords = new Map<string, Map<string, string>>();
       await Promise.all(targetTables.map(async targetTable => {
-        const targetResponse = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(targetTable)}?pageSize=100`, { headers: headers(), cache: "no-store" });
-        const targetData = await targetResponse.json() as { records?: Array<{ id: string; fields: Record<string, unknown> }> };
+        const { response: targetResponse, data: targetData } = await allRecords(targetTable, 100);
+        if (!targetResponse.ok) throw new Error(`Unable to resolve ${targetTable}`);
         const primary = Object.values(definitions).find(definition => definition.table === targetTable)!.primary;
         targetRecords.set(targetTable, new Map((targetData.records || []).map(record => [record.id, String(record.fields[primary] || "").replaceAll("_", " ").replace(/\s+/g, " ").trim()])))
       }));
@@ -130,14 +166,16 @@ export async function GET(request: NextRequest) {
         return { ...record, displayFields };
       });
     }
-    if (table === "Events" && request.nextUrl.searchParams.get("financialSummary") === "1") {
+    if (identity.role === "owner" && table === "Events" && request.nextUrl.searchParams.get("financialSummary") === "1") {
       const payload = data as { records?: FinancialRecord[]; financialTotals?: { revenueReceived: number; outstanding: number } };
-      const [budgetResponse, paymentResponse] = await Promise.all([
-        fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/Budgets?pageSize=100`, { headers: headers(), cache: "no-store" }),
-        fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/Payments?pageSize=100`, { headers: headers(), cache: "no-store" }),
+      const [budgetResult, paymentResult] = await Promise.all([
+        allRecords("Budgets", 100),
+        allRecords("Payments", 100),
       ]);
-      const budgetData = await budgetResponse.json() as { records?: FinancialRecord[] };
-      const paymentData = await paymentResponse.json() as { records?: FinancialRecord[] };
+      const budgetResponse = budgetResult.response;
+      const paymentResponse = paymentResult.response;
+      const budgetData = budgetResult.data as { records?: FinancialRecord[] };
+      const paymentData = paymentResult.data as { records?: FinancialRecord[] };
       if (!budgetResponse.ok || !paymentResponse.ok) return NextResponse.json({ error: { type: "FINANCIAL_SUMMARY_ERROR", message: "Unable to calculate the live event balance" } }, { status: 502 });
       const summary = calculateFinancialSummary(payload.records || [], budgetData.records || [], paymentData.records || []);
       payload.records = summary.records;
@@ -152,9 +190,16 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const { table, id, fields, allowOverbook } = await request.json();
   const error = check(table);
   if (error || !id || !fields) return NextResponse.json({ error: error || "Record and fields are required" }, { status: 400 });
+  if(identity.role==="team"){
+    const seatingEventUpdate=table==="Events"&&Object.keys(fields as Record<string,unknown>).every(field=>["Seating QR Code","Seating Canva Link"].includes(field));
+    if(!teamWritable.has(table)&&!seatingEventUpdate)return NextResponse.json({error:"This action is restricted to the EventArt owner."},{status:403});
+    const current=await existingRecord(table,id);if(!current||!teamRecordAllowed(identity,table,current))return NextResponse.json({error:"This record is not assigned to your account."},{status:403});
+    const requested=eventLinks(table,id,fields);if(requested.length&&!requested.every(eventId=>identity.eventRecordIds.includes(eventId)))return NextResponse.json({error:"You cannot move a record to an unassigned event."},{status:403});
+  }
   const url = `https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}/${encodeURIComponent(id)}`;
   try {
   let validated: Record<string, unknown> | null;
@@ -162,7 +207,7 @@ export async function PATCH(request: NextRequest) {
   if (!validated || !Object.keys(validated).length) return NextResponse.json({ error: "No approved fields were supplied" }, { status: 400 });
   if (table === "Guests") { const seatingError = await guestSeatingError(validated, id, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
   const response = await fetch(url, { method: "PATCH", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
-    const data: unknown = await response.json();
+    const data: unknown = await payload(response);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
     return NextResponse.json(data);
   } catch {
@@ -173,9 +218,11 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const { table, fields, requestId, allowOverbook } = await request.json();
   const error = check(table);
   if (error) return NextResponse.json({ error }, { status: 400 });
+  if(identity.role==="team"&&(!teamWritable.has(table)||!eventLinks(table,"",fields||{}).some(eventId=>identity.eventRecordIds.includes(eventId))))return NextResponse.json({error:"You can create records only for events assigned to your account."},{status:403});
   if (!writable[table]) return NextResponse.json({ error: "Record creation is not enabled for this table" }, { status: 403 });
   if (typeof requestId === "string") {
     const now = Date.now();
@@ -189,7 +236,7 @@ export async function POST(request: NextRequest) {
   if (table === "Guests") { const seatingError = await guestSeatingError(validated, undefined, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
   try {
     const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`, { method: "POST", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
-    const data: unknown = await response.json();
+    const data: unknown = await payload(response);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
     return NextResponse.json(data, { status: 201 });
   } catch {
@@ -198,13 +245,15 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const { table, id } = await request.json();
   const error = check(table);
   if (error || !id) return NextResponse.json({ error: error || "Record is required" }, { status: 400 });
   if (!writable[table]) return NextResponse.json({ error: "Record deletion is not enabled for this table" }, { status: 403 });
+  if(identity.role==="team"){if(!teamWritable.has(table))return NextResponse.json({error:"This action is restricted to the EventArt owner."},{status:403});const current=await existingRecord(table,id);if(!current||!teamRecordAllowed(identity,table,current))return NextResponse.json({error:"This record is not assigned to your account."},{status:403})}
   try {
     const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}/${encodeURIComponent(id)}`, { method: "DELETE", headers: headers() });
-    const data: unknown = await response.json();
+    const data: unknown = await payload(response);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
     return NextResponse.json(data);
   } catch {

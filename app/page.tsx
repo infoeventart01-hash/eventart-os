@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import EventWorkspace from "./EventWorkspace";
 import RecordForm, { formConfigs } from "./RecordForm";
 import DesignStudio from "./DesignStudio";
+import UserManagement from "./UserManagement";
 
 type RecordRow = { id: string; createdTime?: string; fields: Record<string, unknown>; displayFields?: Record<string, string>; computedFields?: Record<string, number> };
 
@@ -15,6 +16,7 @@ const sections = [
   ["Service Catalog", "Service Catalog", "catalog"],
   ["Design Studio", "Design Board", "design"],
   ["Reports", "Payments", "reports"],
+  ["User Management", "Users", "users"],
 ] as const;
 
 const navGroups = [
@@ -23,7 +25,17 @@ const navGroups = [
   { label: "Rentals & Finance", items: ["Inventory", "Rental Orders", "Payments", "Service Catalog"] },
   { label: "Creative", items: ["Design Studio"] },
   { label: "Analytics", items: ["Reports"] },
+  { label: "Account", items: ["User Management"] },
 ] as const;
+
+const routeByLabel: Record<string, string> = {
+  Dashboard: "/", Clients: "/clients", Events: "/events", "Budgets & Proposals": "/budgets",
+  Tasks: "/tasks", Calendar: "/calendar", "Kanban Board": "/kanban", Guests: "/guests",
+  "Seating Chart": "/seating-chart", Vendors: "/vendors", Inventory: "/inventory",
+  "Rental Orders": "/rental-orders", Payments: "/payments", "Service Catalog": "/service-catalog",
+  "Design Studio": "/design-studio", Reports: "/reports", "User Management": "/user-management",
+};
+const labelByRoute = Object.fromEntries(Object.entries(routeByLabel).map(([label, route]) => [route, label]));
 
 const displayFields: Record<string, string[]> = {
   Events: ["Event Name", "Clients", "Event Type", "Event Status", "Ceremony Date & Time", "Venue Name", "Guest Count", "Budget", "Total Contract", "Amount Paid", "Balance Due"],
@@ -46,7 +58,7 @@ function shown(value: unknown) {
   if (Array.isArray(value)) return value.join(", ");
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  return String(value).replaceAll("_", " ").replace(/\s+/g, " ").trim();
 }
 
 function money(value: unknown) {
@@ -73,6 +85,7 @@ function InventoryThumbnail({value,name}:{value:unknown;name:unknown}) {
 }
 
 export default function EventArt() {
+  const [identity,setIdentity]=useState<{name:string;email:string;role:"owner"|"team"|"client";developmentAuthBypass?:boolean}|null>(null);
   const [active, setActive] = useState("Dashboard");
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,6 +99,40 @@ export default function EventArt() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [workspaceTab, setWorkspaceTab] = useState("Overview");
   const [financialTotals, setFinancialTotals] = useState({ revenueReceived: 0, outstanding: 0 });
+  const [pendingEventId, setPendingEventId] = useState("");
+  useEffect(()=>{fetch("/api/auth/me",{cache:"no-store"}).then(async response=>{const data=await response.json();if(response.ok)setIdentity(data)}).catch(()=>undefined)},[]);
+  const firstName=identity?.name?.split(/\s+/)[0]||"there";
+  const allowedTeam=new Set(["Events","Tasks","Guests","Seating Chart","Vendors","Design Studio"]);
+  const visibleGroups=navGroups.map(group=>({...group,items:group.items.filter(label=>identity?.role!=="team"||allowedTeam.has(label))})).filter(group=>group.items.length);
+
+  function navigate(label: string) {
+    setActive(label); setMobileNav(false); setBudgetEvent(null);
+    window.history.pushState({}, "", routeByLabel[label] || "/");
+  }
+  function openWorkspace(event: RecordRow, tab = "Overview") {
+    setWorkspaceTab(tab); setBudgetEvent(event);
+    window.history.pushState({}, "", `/events/${encodeURIComponent(event.id)}`);
+  }
+
+  useEffect(() => {
+    const applyLocation = () => {
+      const params = new URLSearchParams(window.location.search);
+      const eventId = params.get("event") || "";
+      const requested = params.get("view") || labelByRoute[window.location.pathname];
+      if (requested && sections.some(([label]) => label === requested)) setActive(requested);
+      if (eventId) { setActive("Events"); setPendingEventId(eventId); }
+      else if (!window.location.pathname.startsWith("/events/")) { setPendingEventId(""); setBudgetEvent(null); }
+    };
+    applyLocation();
+    window.addEventListener("popstate", applyLocation);
+    return () => window.removeEventListener("popstate", applyLocation);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingEventId || budgetEvent) return;
+    const selected = records.find(record => record.id === pendingEventId);
+    if (selected) { setBudgetEvent(selected); setPendingEventId(""); }
+  }, [records, pendingEventId, budgetEvent]);
 
   const config = sections.find(([label]) => label === active) || sections[0];
   const table = config[1];
@@ -94,6 +141,7 @@ export default function EventArt() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      if(mode==="users"){setLoading(false);setRecords([]);return}
       setLoading(true); setError(""); setRecords([]);
       const tables = mode === "dashboard" ? ["Events", "Payments", "Timeline"] : mode === "budgets" ? ["Budgets", "Events"] : [table];
       try {
@@ -131,7 +179,7 @@ export default function EventArt() {
     setTimeout(() => setNotice(""), 3000);
   }
   async function catalogUpdate(record:RecordRow,fields:Record<string,unknown>){const res=await fetch("/api/airtable",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:"Service Catalog",id:record.id,fields})});if(!res.ok){setNotice("Unable to update service.");return}setNotice("Service Catalog updated.");setRefreshKey(key=>key+1)}
-  async function duplicateService(record:RecordRow){const fields={...record.fields,"Service Name":`${shown(record.fields["Service Name"])} Copy`};delete fields.Image;const res=await fetch("/api/airtable",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:"Service Catalog",requestId:`catalog-${Date.now()}`,fields})});if(!res.ok){setNotice("Unable to duplicate service.");return}setNotice("Service duplicated.");setRefreshKey(key=>key+1)}
+  async function duplicateService(record:RecordRow){const fields:Record<string,unknown>={...record.fields,"Service Name":`${shown(record.fields["Service Name"])} Copy`};delete fields.Image;const res=await fetch("/api/airtable",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:"Service Catalog",requestId:`catalog-${Date.now()}`,fields})});if(!res.ok){setNotice("Unable to duplicate service.");return}setNotice("Service duplicated.");setRefreshKey(key=>key+1)}
 
   async function remove(record: RecordRow, recordTable = table) {
     const name = shown(record.fields[displayFields[recordTable]?.[0] || "Budget Name"]);
@@ -149,7 +197,7 @@ export default function EventArt() {
     <main className="app-shell">
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
         <div className="brand"><img src="/eventart-logo-transparent.png" alt="EventArt" /><div><strong>EventArt</strong><span>Luxury Event Design & Styling</span></div></div>
-        <nav className="sidebar-nav"><NavButton label="Dashboard" active={active} select={(label)=>{setActive(label);setMobileNav(false)}}/>{navGroups.map(group=><section className="nav-group" key={group.label}><h2>{group.label}</h2>{group.items.map(label=><NavButton key={label} label={label} active={active} select={(next)=>{setActive(next);setMobileNav(false)}}/>)}</section>)}</nav>
+        <nav className="sidebar-nav">{identity?.role!=="team"&&<NavButton label="Dashboard" active={active} select={navigate}/>} {visibleGroups.map(group=><section className="nav-group" key={group.label}><h2>{group.label}</h2>{group.items.map(label=><NavButton key={label} label={label} active={active} select={navigate}/>)}</section>)}</nav>
         <div className="side-footer"><span className="online-dot" /> Airtable connected<small>Version 1.0</small></div>
       </aside>
 
@@ -158,14 +206,16 @@ export default function EventArt() {
           <div className="header-brand"><img src="/eventart-logo-transparent.png" alt="" /><strong>EventArt</strong></div>
           <button className="menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open menu">☰</button>
           <div className="search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your workspace…" /></div>
-          <div className="top-actions"><button className="icon-button" aria-label="Notifications">◌<i /></button><div className="avatar">MP</div><div className="profile"><strong>Maritza Paultre</strong><span>Lead Planner</span></div></div>
+          <div className="top-actions"><div className="avatar">{identity?.name?.split(/\s+/).map(part=>part[0]).join("").slice(0,2).toUpperCase()||"EA"}</div><details className="account-menu"><summary className="profile"><strong>{identity?.name||"EventArt User"}</strong><span>{identity?.role==="owner"?"Owner / Admin":identity?.role==="team"?"Team Member":"Client"}</span></summary><div><b>{identity?.email}</b><span>{identity?.role}</span><button onClick={()=>window.location.assign("/forgot-password")}>Change Password</button><button onClick={async()=>{await fetch("/api/auth/logout",{method:"POST"});window.location.assign("/login")}}>Log Out</button></div></details></div>
         </header>
 
+        {identity?.developmentAuthBypass && <div className="dev-auth-banner" role="status">Development authentication bypass is active</div>}
+
         <div className={budgetEvent ? "content budget-content" : "content"}>
-          {budgetEvent ? <EventWorkspace event={budgetEvent} initialTab={workspaceTab} onBack={() => setBudgetEvent(null)} /> : <>
-          {mode!=="design"&&<div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? "Welcome back, Maritza" : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : `Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>}
+          {budgetEvent ? <EventWorkspace event={budgetEvent} initialTab={workspaceTab} role={identity?.role} onBack={() => navigate("Events")} /> : <>
+          {mode!=="design"&&<div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? `Welcome back, ${firstName}` : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : mode==="users"?"Invite users and control their EventArt access.":`Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>}
           {notice && <div className="notice">{notice}</div>}
-          {mode === "design" ? <DesignStudio onOpenEvent={(event)=>{setWorkspaceTab("Design Studio");setBudgetEvent(event)}}/> : loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} timeline={timeline} financialTotals={financialTotals} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={(event,tab) => { setWorkspaceTab(tab); setBudgetEvent(event); }} onDelete={budget => remove(budget,"Budgets")} /> : mode==="catalog"?<CatalogPage records={records} onEdit={setEditing} onDuplicate={duplicateService} onArchive={record=>catalogUpdate(record,{Active:false})} onDelete={record=>remove(record,"Service Catalog")}/>: <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={(event) => { setWorkspaceTab("Overview"); setBudgetEvent(event); }} />}
+          {mode === "users" ? <UserManagement/> : mode === "design" ? <DesignStudio onOpenEvent={(event)=>openWorkspace(event,"Design Studio")}/> : loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} timeline={timeline} financialTotals={financialTotals} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={openWorkspace} onDelete={budget => remove(budget,"Budgets")} /> : mode==="catalog"?<CatalogPage records={records} onEdit={setEditing} onDuplicate={duplicateService} onArchive={record=>catalogUpdate(record,{Active:false})} onDelete={record=>remove(record,"Service Catalog")}/>: <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={openWorkspace} />}
           </>}
         </div>
       </section>
@@ -178,7 +228,7 @@ export default function EventArt() {
 
 function NavButton({label,active,select}:{label:string;active:string;select:(label:string)=>void}){return <button className={active===label?"active":""} onClick={()=>select(label)}><span className="nav-icon" aria-hidden="true"/>{label}</button>}
 function Loading() { return <div className="loading-grid">{[1,2,3,4].map((n) => <div className="skeleton" key={n} />)}</div>; }
-function Empty({ error }: { error: string }) { return <div className="empty"><img src="/eventart-logo-transparent.png" alt="EventArt" /><h2>We couldn't load this page.</h2><p>{error}</p><span>Please refresh and try again.</span></div>; }
+function Empty({ error }: { error: string }) { return <div className="empty"><img src="/eventart-logo-transparent.png" alt="EventArt" /><h2>We couldn&apos;t load this page.</h2><p>{error}</p><span>Please refresh and try again.</span></div>; }
 
 function Dashboard({ events, timeline, financialTotals }: { events: RecordRow[]; timeline: RecordRow[]; financialTotals: { revenueReceived: number; outstanding: number } }) {
   const booked = events.filter((e) => ["Contract Signed", "Deposit Paid", "Planning", "Design Approved"].includes(String(e.fields["Event Status"]))).length;
@@ -211,7 +261,7 @@ function BudgetsPage({ records, query, open, onDelete }: { records: RecordRow[];
   return <section className="table-card budgets-list"><div className="table-tools"><span><b>{rows.length}</b> budgets and proposals</span><label className="status-filter">Status<select value={status} onChange={e => setStatus(e.target.value)}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label></div><div className="table-wrap"><table><thead><tr>{["Budget Name","Event","Status","Proposal Number","Proposal Date","Total Client Price","Deposit Required","Remaining Balance","Actions"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(({ budget, event }) => <tr key={budget.id}><td><b>{shown(budget.fields["Budget Name"])}</b></td><td>{event ? shown(event.fields["Event Name"]) : "Linked event unavailable"}</td><td><span className="pill">{shown(budget.fields.Status)}</span></td><td>{shown(budget.fields["Proposal Number"])}</td><td>{shown(budget.fields["Proposal Date"])}</td><td>{money(budget.fields["Total Client Price"])}</td><td>{money(budget.fields["Deposit Required"])}</td><td>{money(budget.fields["Remaining Balance"])}</td><td className="budget-list-actions"><button disabled={!event} onClick={() => event && open(event,"Budget & Proposal")}>Open Budget</button><button disabled={!event} onClick={() => event && open(event,"Overview")}>Open related Event</button><button className="danger" onClick={() => onDelete(budget)}>Delete</button></td></tr>)}</tbody></table>{!rows.length && <div className="workspace-empty"><h3>No matching budgets</h3><p>Try another search or status filter.</p></div>}</div></section>;
 }
 
-function CatalogPage({records,onEdit,onDuplicate,onArchive,onDelete}:{records:RecordRow[];onEdit:(record:RecordRow)=>void;onDuplicate:(record:RecordRow)=>void;onArchive:(record:RecordRow)=>void;onDelete:(record:RecordRow)=>void}){const [search,setSearch]=useState("");const [category,setCategory]=useState("All");const [eventType,setEventType]=useState("All");const [active,setActive]=useState("All");const [sort,setSort]=useState("Display Order");const categories=["All",...new Set(records.map(record=>String(record.fields.Category||"")).filter(Boolean))];const eventTypes=["All",...new Set(records.flatMap(record=>Array.isArray(record.fields["Event Types"])?record.fields["Event Types"] as string[]:[]))];const rows=[...records].filter(record=>{const fields=record.fields;return JSON.stringify(fields).toLowerCase().includes(search.toLowerCase())&&(category==="All"||fields.Category===category)&&(eventType==="All"||(Array.isArray(fields["Event Types"])&&fields["Event Types"].includes(eventType)))&&(active==="All"||Boolean(fields.Active)===(active==="Active"))}).sort((a,b)=>sort==="Price"?Number(a.fields["Standard Unit Price"]||0)-Number(b.fields["Standard Unit Price"]||0):sort==="Display Order"?Number(a.fields["Display Order"]||0)-Number(b.fields["Display Order"]||0):String(a.fields[sort]||"").localeCompare(String(b.fields[sort]||"")));return <section className="catalog-page"><div className="catalog-tools"><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search services…"/><select value={category} onChange={event=>setCategory(event.target.value)}>{categories.map(value=><option key={value}>{value}</option>)}</select><select value={eventType} onChange={event=>setEventType(event.target.value)}>{eventTypes.map(value=><option key={value}>{value}</option>)}</select><select value={active} onChange={event=>setActive(event.target.value)}><option>All</option><option>Active</option><option>Inactive</option></select><select value={sort} onChange={event=>setSort(event.target.value)}><option>Display Order</option><option>Service Name</option><option>Category</option><option>Price</option></select></div><div className="service-cards">{rows.map(record=><article key={record.id}><span>{shown(record.fields.Category)}</span><h3>{shown(record.fields["Service Name"])}</h3><p>{shown(record.fields.Description)}</p><div><b>{new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(Number(record.fields["Standard Unit Price"]||0))}</b><small>Cost {new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(Number(record.fields["Standard Unit Cost"]||0))}</small></div><p>{record.fields.Taxable?"Taxable":"Not taxable"} · {record.fields["Optional by Default"]?"Optional":"Standard"} · {record.fields.Active?"Active":"Inactive"}</p><footer><button onClick={()=>onEdit(record)}>Edit</button><button onClick={()=>onDuplicate(record)}>Duplicate</button>{record.fields.Active&&<button onClick={()=>onArchive(record)}>Deactivate</button>}<button className="danger" onClick={()=>onDelete(record)}>Delete</button></footer></article>)}</div></section>}
+function CatalogPage({records,onEdit,onDuplicate,onArchive,onDelete}:{records:RecordRow[];onEdit:(record:RecordRow)=>void;onDuplicate:(record:RecordRow)=>void;onArchive:(record:RecordRow)=>void;onDelete:(record:RecordRow)=>void}){const [search,setSearch]=useState("");const [category,setCategory]=useState("All");const [eventType,setEventType]=useState("All");const [active,setActive]=useState("All");const [sort,setSort]=useState("Display Order");const categories=["All",...new Set(records.map(record=>String(record.fields.Category||"")).filter(Boolean))];const eventTypes=["All",...new Set(records.flatMap(record=>Array.isArray(record.fields["Event Types"])?record.fields["Event Types"] as string[]:[]))];const rows=[...records].filter(record=>{const fields=record.fields;return JSON.stringify(fields).toLowerCase().includes(search.toLowerCase())&&(category==="All"||fields.Category===category)&&(eventType==="All"||(Array.isArray(fields["Event Types"])&&fields["Event Types"].includes(eventType)))&&(active==="All"||Boolean(fields.Active)===(active==="Active"))}).sort((a,b)=>sort==="Price"?Number(a.fields["Standard Unit Price"]||0)-Number(b.fields["Standard Unit Price"]||0):sort==="Display Order"?Number(a.fields["Display Order"]||0)-Number(b.fields["Display Order"]||0):String(a.fields[sort]||"").localeCompare(String(b.fields[sort]||"")));return <section className="catalog-page"><div className="catalog-tools"><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search services…"/><select value={category} onChange={event=>setCategory(event.target.value)}>{categories.map(value=><option key={value}>{value}</option>)}</select><select value={eventType} onChange={event=>setEventType(event.target.value)}>{eventTypes.map(value=><option key={value}>{value}</option>)}</select><select value={active} onChange={event=>setActive(event.target.value)}><option>All</option><option>Active</option><option>Inactive</option></select><select value={sort} onChange={event=>setSort(event.target.value)}><option>Display Order</option><option>Service Name</option><option>Category</option><option>Price</option></select></div><div className="service-cards">{rows.map(record=><article key={record.id}><span>{shown(record.fields.Category)}</span><h3>{shown(record.fields["Service Name"])}</h3><p>{shown(record.fields.Description)}</p><div><b>{new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(Number(record.fields["Standard Unit Price"]||0))}</b><small>Cost {new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(Number(record.fields["Standard Unit Cost"]||0))}</small></div><p>{Boolean(record.fields.Taxable)?"Taxable":"Not taxable"} · {Boolean(record.fields["Optional by Default"])?"Optional":"Standard"} · {Boolean(record.fields.Active)?"Active":"Inactive"}</p><footer><button onClick={()=>onEdit(record)}>Edit</button><button onClick={()=>onDuplicate(record)}>Duplicate</button>{Boolean(record.fields.Active)&&<button onClick={()=>onArchive(record)}>Deactivate</button>}<button className="danger" onClick={()=>onDelete(record)}>Delete</button></footer></article>)}</div></section>}
 
 function RecordTable({ table, records, onEdit, onDelete, onBudget }: { table: string; records: RecordRow[]; onEdit: (r: RecordRow) => void; onDelete: (r: RecordRow) => void; onBudget: (r: RecordRow) => void }) {
   const fields = displayFields[table] || [];

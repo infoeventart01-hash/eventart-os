@@ -102,7 +102,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ eve
       table: publicTable(guestTable.get(guest.id)),
       seatNumber: clean(guest.fields["Seat Number"]),
       vip: Boolean(guest.fields.VIP),
-    })).filter(guest => guest.name);
+    })).filter(guest => guest.name && guest.table);
 
     const tables = tableRecords.map(table => ({
       ...publicTable(table)!,
