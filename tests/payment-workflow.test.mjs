@@ -75,9 +75,8 @@ test("duplicate submit prevention and a reachable modal footer are wired", async
   assert.match(component, /if \(busy \|\| Object\.keys\(errors\)\.length\) return/);
   assert.match(component, /type="submit" className="gold-button" disabled=\{!canSubmit\}/);
   assert.match(component, />Cancel</);
-  assert.match(component, />Record Payment</);
+  assert.match(component, /editing \? "Save Changes" : "Record Payment"/);
   assert.match(route, /Duplicate submission prevented/);
   assert.match(styles, /overflow-y: auto/);
   assert.match(styles, /position: sticky/);
 });
-

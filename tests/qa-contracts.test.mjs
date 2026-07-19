@@ -76,10 +76,9 @@ test("CRUD, duplicate protection, confirmations and automatic refresh are presen
   for (const method of ["GET", "POST", "PATCH", "DELETE"]) assert.match(api, new RegExp(`export async function ${method}`));
   assert.match(api, /Duplicate submission prevented/);
   assert.match(form, /if\(saving\)return/);
-  assert.match(form, /disabled=\{saving/);
-  assert.doesNotMatch(form, /disabled=\{saving\|\|missing\.length>0\}/);
+  assert.match(form, /disabled=\{saving\|\|missing\.length>0\}/);
   assert.match(form, /const emptyLabel=.*field\.required/);
-  assert.match(page, /window\.confirm/);
+  assert.match(page, /confirmation\.confirm/);
   assert.match(workspace, /await load\(\)/);
 });
 

@@ -152,6 +152,38 @@ async function guestSeatingError(fields: Record<string, unknown>, recordId: stri
   return null;
 }
 
+const deleteDependencies: Record<string, Array<{ table: string; field: string }>> = {
+  Events: [
+    { table: "Budgets", field: "Event" }, { table: "Budget Items", field: "Event" },
+    { table: "Payments", field: "Event" }, { table: "Rental Orders", field: "Event" },
+    { table: "Timeline", field: "Event" }, { table: "Guests", field: "Event" },
+    { table: "Vendors", field: "Event" }, { table: "Seating Tables", field: "Event" },
+    { table: "Design Board", field: "Event" },
+  ],
+  Clients: [
+    { table: "Events", field: "Clients" }, { table: "Payments", field: "Client" },
+    { table: "Rental Orders", field: "Client" },
+  ],
+  Budgets: [
+    { table: "Budget Items", field: "Budget" }, { table: "Payments", field: "Proposal / Budget" },
+  ],
+  Inventory: [{ table: "Rental Orders", field: "Rental Item" }],
+  Vendors: [{ table: "Budget Items", field: "Vendor" }],
+  "Seating Tables": [{ table: "Guests", field: "Seating Chart" }],
+};
+
+async function dependencyError(table: string, recordId: string) {
+  const definitions = deleteDependencies[table] || [];
+  const impacts: string[] = [];
+  for (const definition of definitions) {
+    const result = await allRecords(definition.table, 100);
+    if (!result.response.ok) return `Unable to verify linked ${definition.table} records. Nothing was deleted.`;
+    const count = (result.data.records || []).filter(record => Array.isArray(record.fields[definition.field]) && (record.fields[definition.field] as string[]).includes(recordId)).length;
+    if (count) impacts.push(`${count} ${definition.table} record${count === 1 ? "" : "s"}`);
+  }
+  return impacts.length ? `Delete blocked because this record is linked to ${impacts.join(", ")}. Reassign or remove those linked records first.` : "";
+}
+
 export async function GET(request: NextRequest) {
   const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const table = request.nextUrl.searchParams.get("table");
@@ -220,7 +252,7 @@ export async function PATCH(request: NextRequest) {
   const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const { table, id, fields, allowOverbook } = await request.json();
   const error = check(table);
-  if (error || !id || !fields) return NextResponse.json({ error: error || "Record and fields are required" }, { status: 400 });
+  if (error || !/^rec[A-Za-z0-9]{14}$/.test(String(id || "")) || !fields) return NextResponse.json({ error: error || "A valid Airtable record ID and fields are required" }, { status: 400 });
   if(identity.role==="team"){
     const seatingEventUpdate=table==="Events"&&Object.keys(fields as Record<string,unknown>).every(field=>["Seating QR Code","Seating Canva Link"].includes(field));
     if(!teamWritable.has(table)&&!seatingEventUpdate)return NextResponse.json({error:"This action is restricted to the EventArt owner."},{status:403});
@@ -232,6 +264,39 @@ export async function PATCH(request: NextRequest) {
   let validated: Record<string, unknown> | null;
   try { validated = safeFields(table, fields); } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid values" }, { status: 400 }); }
   if (!validated || !Object.keys(validated).length) return NextResponse.json({ error: "No approved fields were supplied" }, { status: 400 });
+  if (table === "Payments") {
+    const current = await existingRecord("Payments", id);
+    if (!current) return NextResponse.json({ error: "The Payment record no longer exists." }, { status: 404 });
+    const merged = { ...current.fields, ...validated };
+    const eventId = Array.isArray(merged.Event) ? String(merged.Event[0] || "") : "";
+    if (!/^rec[A-Za-z0-9]{14}$/.test(eventId)) return NextResponse.json({ error: "Select an Event before saving the payment." }, { status: 400 });
+    const paymentType = normalizePaymentType(merged["Payment Type"]);
+    if (!new Set(PAYMENT_TYPES).has(paymentType)) return NextResponse.json({ error: "Select a valid payment type." }, { status: 400 });
+    validated["Payment Type"] = paymentType;
+    if (paymentType === "Other" && !String(merged["Other Description"] || "").trim()) return NextResponse.json({ error: "Describe the Other payment type." }, { status: 400 });
+    const amount = Number(merged["Payment Amount"]);
+    if (!Number.isFinite(amount) || Math.abs(amount) <= 0) return NextResponse.json({ error: "Enter a payment amount greater than zero." }, { status: 400 });
+    validated["Payment Amount"] = paymentType === "Refund" ? -Math.abs(amount) : Math.abs(amount);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(merged["Payment Date"] || ""))) return NextResponse.json({ error: "Select a valid Payment Date." }, { status: 400 });
+    if (merged["Payment Method"] && !new Set(PAYMENT_METHODS).has(String(merged["Payment Method"]))) return NextResponse.json({ error: "Select a valid Payment Method." }, { status: 400 });
+    if (merged["Payment Status"] && !new Set(PAYMENT_STATUSES).has(String(merged["Payment Status"]))) return NextResponse.json({ error: "Select a valid Payment Status." }, { status: 400 });
+    const eventRecord = await existingRecord("Events", eventId);
+    if (!eventRecord) return NextResponse.json({ error: "The selected Event no longer exists." }, { status: 400 });
+    const eventClients = Array.isArray(eventRecord.fields.Clients) ? eventRecord.fields.Clients.map(String) : [];
+    if (!eventClients.length) return NextResponse.json({ error: "The selected Event does not have a linked Client." }, { status: 400 });
+    validated.Event = [eventId];
+    validated.Client = eventClients.slice(0, 1);
+    const budgetId = Array.isArray(merged["Proposal / Budget"]) ? String((merged["Proposal / Budget"] as unknown[])[0] || "") : "";
+    if (budgetId) {
+      if (!/^rec[A-Za-z0-9]{14}$/.test(budgetId)) return NextResponse.json({ error: "Select a valid Proposal / Budget." }, { status: 400 });
+      const budget = await existingRecord("Budgets", budgetId);
+      const linkedEvents = Array.isArray(budget?.fields.Event) ? budget!.fields.Event as string[] : [];
+      if (!budget || !linkedEvents.includes(eventId)) return NextResponse.json({ error: "The selected Proposal / Budget does not belong to this Event." }, { status: 400 });
+      validated["Proposal / Budget"] = [budgetId];
+      validated["Proposal Number"] = String(budget.fields["Proposal Number"] || merged["Proposal Number"] || "");
+    }
+    validated["Updated At"] = new Date().toISOString();
+  }
   if (table === "Guests") { const seatingError = await guestSeatingError(validated, id, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
   const response = await fetch(url, { method: "PATCH", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
     const data: unknown = await payload(response);
@@ -324,10 +389,12 @@ export async function DELETE(request: NextRequest) {
   const auth=requireIdentity(request,["owner","team"]);if(auth.error)return auth.error;const identity=auth.identity!;
   const { table, id } = await request.json();
   const error = check(table);
-  if (error || !id) return NextResponse.json({ error: error || "Record is required" }, { status: 400 });
+  if (error || !/^rec[A-Za-z0-9]{14}$/.test(String(id || ""))) return NextResponse.json({ error: error || "A valid Airtable record ID is required" }, { status: 400 });
   if (!writable[table]) return NextResponse.json({ error: "Record deletion is not enabled for this table" }, { status: 403 });
   if(identity.role==="team"){if(!teamWritable.has(table))return NextResponse.json({error:"This action is restricted to the EventArt owner."},{status:403});const current=await existingRecord(table,id);if(!current||!teamRecordAllowed(identity,table,current))return NextResponse.json({error:"This record is not assigned to your account."},{status:403})}
   try {
+    const blocked = await dependencyError(table, id);
+    if (blocked) return NextResponse.json({ error: { type: "LINKED_RECORDS", message: blocked } }, { status: 409 });
     const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}/${encodeURIComponent(id)}`, { method: "DELETE", headers: headers() });
     const data: unknown = await payload(response);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });

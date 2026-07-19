@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useConfirmDialog } from "./ConfirmDialog";
 
 type Row = { id: string; fields: Record<string, unknown> };
 type Attachment = { id?: string; url?: string; filename?: string; type?: string };
@@ -25,6 +26,7 @@ async function api(method: string, body?: unknown, query?: string) {
 }
 
 export default function BudgetWorkspace({ event, onBack }: Props) {
+  const confirmation = useConfirmDialog();
   const [budget, setBudget] = useState<Row | null>(null);
   const [items, setItems] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +87,7 @@ export default function BudgetWorkspace({ event, onBack }: Props) {
     try{const updated=await api("PATCH",{table:"Budget Items",id:item.id,fields});setItems((old)=>old.map((r)=>r.id===item.id?updated:r));setMessage("Budget item saved to Airtable.");}catch(e){setMessage(e instanceof Error?e.message:"Unable to update item");}
   }
   async function addCatalogItem(service:Row,optional=true){if(!budget||saving)return;const name=text(service.fields["Service Name"]);if(items.some(item=>text(item.fields["Item / Service"]).toLowerCase()===name.toLowerCase())&&!confirm(`${name} is already in this budget. Add another?`))return;setSaving(true);try{const quantity=name==="Wedding Thank-You Favors"?(num(event.fields["Guest Count"])||1):1;const catalogCategory=text(service.fields.Category)||"Miscellaneous";const fields={"Item / Service":name,Budget:[budget.id],Event:[event.id],Category:categories.includes(catalogCategory)?catalogCategory:"Miscellaneous","Custom Category":catalogCategory,Description:service.fields.Description||"",Quantity:quantity,"Unit Cost":num(service.fields["Standard Unit Cost"]),"Unit Price":num(service.fields["Standard Unit Price"]),Discount:0,Taxable:Boolean(service.fields.Taxable),"Tax Rate":num(service.fields["Tax Rate"])||0.13,"Optional Item":optional,"Included in Proposal":!optional,"Display Order":items.length+1};const created=await api("POST",{table:"Budget Items",requestId:requestId(),fields});setItems(old=>[...old,created]);setMessage(`${name} added ${optional?"as an optional enhancement":"to the proposal"}.`)}catch(error){setMessage(error instanceof Error?error.message:"Unable to add service")}finally{setSaving(false)}}
-  async function removeItem(item:Row){if(!confirm(`Delete “${polished(item.fields["Item / Service"])}”? This cannot be undone.`))return;try{await api("DELETE",{table:"Budget Items",id:item.id});setItems((old)=>old.filter((r)=>r.id!==item.id));setMessage("Budget item deleted.");}catch(e){setMessage(e instanceof Error?e.message:"Unable to delete item");}}
+  async function removeItem(item:Row){if(!await confirmation.confirm({title:"Delete budget item?",name:polished(item.fields["Item / Service"]),body:"This removes the budget item from Airtable and cannot be undone."}))return;try{await api("DELETE",{table:"Budget Items",id:item.id});setItems((old)=>old.filter((r)=>r.id!==item.id));setMessage("Budget item deleted successfully.");}catch(e){setMessage(e instanceof Error?e.message:"Unable to delete item");}}
   async function persistOrder(next:Row[], success:string){
     if(reordering)return;
     const previous=items;setItems(next);setReordering(true);
@@ -123,6 +125,7 @@ export default function BudgetWorkspace({ event, onBack }: Props) {
     <section className="budget-summary"><div className="internal-summary"><p className="eyebrow">PRIVATE · EVENTART TEAM</p><h3>Internal business view</h3><p className="summary-help">Internal cost and profitability never appear in the client proposal.</p><Summary label="Total internal cost" value={f["Total Internal Cost"]}/><Summary label="Estimated profit" value={f["Estimated Profit"]}/><Summary label={<>Profit margin <Help text="Estimated profit as a percentage of client revenue before tax."/></>} value={`${(num(f["Profit Margin %"])*100).toFixed(1)}%`} plain/><Summary label="Included services" value={`${items.filter(item=>item.fields["Included in Proposal"]).length}`} plain/><Summary label="Average client price" value={items.length?num(f.Subtotal)/items.length:0}/></div><div className="client-summary"><p className="eyebrow">CLIENT INVESTMENT</p><h3>Financial summary</h3><Summary label="Services Subtotal" value={f.Subtotal}/><Summary label="Item Discounts" value={f["Item Discounts"]}/><div className="summary-edit"><label>Event Discount <Help text="A budget-wide discount applied after all included service line items."/></label><input type="number" min="0" defaultValue={num(f["Event Discount"])} onBlur={(e)=>saveBudget({"Event Discount":Math.max(0,num(e.target.value))})}/></div><ReserveEditor type={text(f["Contingency Type"])} value={num(f["Contingency Value"])} subtotal={num(f.Subtotal)} onSave={saveBudget}/><Summary label="Subtotal Before Tax" value={Math.max(0,num(f["Total Client Price"])-num(f.Tax))}/><Summary label="Tax" value={f.Tax}/><Summary label="Total Client Investment" value={f["Total Client Price"]} total/><Summary label="Deposit Required" value={f["Deposit Required"]}/><Summary label="Remaining Balance" value={f["Remaining Balance"]} total/></div></section>
     <DepositEditor total={num(f["Total Client Price"])} saved={num(f["Deposit Required"])} draft={depositDraft} saving={saving} onDraft={setDepositDraft} onApply={applyDeposit}/>
     {preview&&<LuxuryProposalPreview event={event} budget={budget} items={items} designs={designs} clientName={clientName} onClose={()=>setPreview(false)}/>}
+    {confirmation.dialog}
   </div>;
 }
 

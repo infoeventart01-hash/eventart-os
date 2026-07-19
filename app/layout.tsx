@@ -3,6 +3,9 @@ import "./globals.css";
 import "./dashboard.css";
 import "./payments.css";
 import "./payment-modal.css";
+import "./confirm-dialog.css";
+import "./crud-form.css";
+import "./record-details.css";
 
 export const metadata: Metadata = {
   title: "EventArt",

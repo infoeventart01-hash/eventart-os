@@ -9,6 +9,7 @@ import {
   readPaymentResponse,
   validatePaymentDraft,
 } from "@/lib/payment-contract.mjs";
+import { useConfirmDialog } from "./ConfirmDialog";
 
 type Row = {
   id: string;
@@ -71,11 +72,13 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
   const [budgets, setBudgets] = useState<Row[]>([]);
   const [items, setItems] = useState<Row[]>([]);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Row | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [form, setForm] = useState<PaymentDraft>(emptyDraft);
   const [filters, setFilters] = useState({ event: "", type: "", status: "" });
   const requestId = useRef("");
+  const confirmation = useConfirmDialog();
 
   useEffect(() => {
     Promise.all(["Events", "Clients", "Budgets", "Budget Items"].map(async table => {
@@ -121,8 +124,21 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
     .filter(row => row.fields["Payment Type"] === "Refund" && settled(row))
     .reduce((sum, row) => sum + Math.abs(Number(row.fields["Payment Amount"] || 0)), 0);
 
-  function openPaymentForm() {
-    setForm(emptyDraft());
+  function openPaymentForm(record?: Row) {
+    setEditing(record || null);
+    setForm(record ? {
+      event: ids(record, "Event")[0] || "",
+      budget: ids(record, "Proposal / Budget")[0] || "",
+      type: str(record.fields["Payment Type"]) || PAYMENT_TYPES[0],
+      other: str(record.fields["Other Description"]),
+      amount: String(Math.abs(Number(record.fields["Payment Amount"]) || 0) || ""),
+      date: str(record.fields["Payment Date"]),
+      due: str(record.fields["Due Date"]),
+      method: str(record.fields["Payment Method"]) || "E-Transfer",
+      status: str(record.fields["Payment Status"]) || "Paid",
+      reference: str(record.fields["Reference Number"]),
+      notes: str(record.fields.Notes),
+    } : emptyDraft());
     requestId.current = `pay-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setNotice("");
     setOpen(true);
@@ -149,21 +165,48 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
         proposalNumber: str(budget?.fields["Proposal Number"]),
         recordedBy,
       });
+      if (editing) {
+        fields["Proposal / Budget"] = form.budget ? [form.budget] : [];
+        fields["Proposal Number"] = str(budget?.fields["Proposal Number"]);
+        fields["Reference Number"] = form.reference.trim();
+        fields["Other Description"] = form.type === "Other" ? form.other.trim() : "";
+        fields["Due Date"] = form.due;
+        fields.Notes = form.notes.trim();
+      }
       const response = await fetch("/api/airtable", {
-        method: "POST",
+        method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "Payments", requestId: requestId.current, fields }),
+        body: JSON.stringify({ table: "Payments", id: editing?.id, requestId: editing ? undefined : requestId.current, fields }),
       });
       const data = await readPaymentResponse(response);
       if (!response.ok) throw new Error(errorMessage(data));
       setOpen(false);
-      setNotice("Payment recorded successfully. The receipt action is ready.");
+      setNotice(editing ? "Changes saved successfully." : "Payment recorded successfully. The receipt action is ready.");
       onChanged();
     } catch (error) {
       setNotice(errorMessage(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function removePayment(record: Row) {
+    const accepted = await confirmation.confirm({
+      title: "Delete Payment?",
+      name: str(record.fields["Payment Number"] || record.fields["Reference Number"] || cad(record.fields["Payment Amount"])),
+      body: "This action cannot be undone. Event paid totals, refunds, remaining balances, and dashboard revenue will refresh after deletion.",
+    });
+    if (!accepted || busy) return;
+    setBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/airtable", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ table: "Payments", id: record.id }) });
+      const data = await readPaymentResponse(response);
+      if (!response.ok) throw new Error(errorMessage(data, "Unable to delete payment."));
+      setNotice("Payment deleted successfully.");
+      onChanged();
+    } catch (error) { setNotice(errorMessage(error, "Unable to delete payment.")); }
+    finally { setBusy(false); }
   }
 
   function print(row: Row, kind: "invoice" | "receipt") {
@@ -191,18 +234,18 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
       <select aria-label="Filter by event" value={filters.event} onChange={event => setFilters({ ...filters, event: event.target.value })}><option value="">All events</option>{events.map(row => <option key={row.id} value={row.id}>{str(row.fields["Event Name"])}</option>)}</select>
       <select aria-label="Filter by payment type" value={filters.type} onChange={event => setFilters({ ...filters, type: event.target.value })}><option value="">All types</option>{PAYMENT_TYPES.map(value => <option key={value}>{value}</option>)}</select>
       <select aria-label="Filter by status" value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="">All statuses</option>{PAYMENT_STATUSES.map(value => <option key={value}>{value}</option>)}</select>
-      <button className="gold-button" onClick={openPaymentForm}>+ Record Payment</button>
+      <button className="gold-button" onClick={() => openPaymentForm()}>+ Record Payment</button>
     </div>
     {notice && <div className="notice" role="status">{notice}</div>}
     <div className="table-card"><div className="table-wrap"><table><thead><tr>{["Payment Date", "Payment Number", "Client", "Event", "Proposal Number", "Invoice Number", "Payment Type", "Method", "Amount", "Status", "Receipt", "Actions"].map(value => <th key={value}>{value}</th>)}</tr></thead><tbody>{rows.map(row => {
       const linkedEvent = events.find(record => ids(row, "Event").includes(record.id));
       const linkedClient = clients.find(record => ids(row, "Client").includes(record.id));
-      return <tr key={row.id}><td>{str(row.fields["Payment Date"])}</td><td>{str(row.fields["Payment Number"] || row.fields["Payment ID"])}</td><td>{str(linkedClient?.fields["Client Name"])}</td><td>{str(linkedEvent?.fields["Event Name"])}</td><td>{str(row.fields["Proposal Number"]) || "—"}</td><td>{str(row.fields["Invoice Number"]) || "—"}</td><td>{str(row.fields["Payment Type"])}</td><td>{str(row.fields["Payment Method"])}</td><td className={row.fields["Payment Type"] === "Refund" ? "refund" : ""}>{cad(row.fields["Payment Amount"])}</td><td><span className="pill">{str(row.fields["Payment Status"])}</span></td><td>{str(row.fields["Receipt Number"]) || "—"}</td><td className="payment-actions"><button onClick={() => print(row, "invoice")}>Invoice</button><button onClick={() => print(row, "receipt")}>Receipt</button></td></tr>;
+      return <tr key={row.id}><td>{str(row.fields["Payment Date"])}</td><td>{str(row.fields["Payment Number"] || row.fields["Payment ID"])}</td><td>{str(linkedClient?.fields["Client Name"])}</td><td>{str(linkedEvent?.fields["Event Name"])}</td><td>{str(row.fields["Proposal Number"]) || "—"}</td><td>{str(row.fields["Invoice Number"]) || "—"}</td><td>{str(row.fields["Payment Type"])}</td><td>{str(row.fields["Payment Method"])}</td><td className={row.fields["Payment Type"] === "Refund" ? "refund" : ""}>{cad(row.fields["Payment Amount"])}</td><td><span className="pill">{str(row.fields["Payment Status"])}</span></td><td>{str(row.fields["Receipt Number"]) || "—"}</td><td className="payment-actions"><button onClick={() => print(row, "invoice")}>Invoice</button><button onClick={() => print(row, "receipt")}>Receipt</button><button onClick={() => openPaymentForm(row)}>Edit</button><button className="danger" onClick={() => removePayment(row)}>Delete</button></td></tr>;
     })}</tbody></table></div></div>
     {open && <div className="record-form-overlay">
       <button className="record-form-scrim" onClick={() => setOpen(false)} aria-label="Cancel" />
       <form className="record-form payment-form" onSubmit={save} noValidate>
-        <header><div><p className="eyebrow">EVENTART PAYMENTS</p><h2>Record Payment</h2></div><button type="button" onClick={() => setOpen(false)} aria-label="Close payment form">×</button></header>
+        <header><div><p className="eyebrow">EVENTART PAYMENTS</p><h2>{editing ? "Edit Payment" : "Record Payment"}</h2></div><button type="button" onClick={() => setOpen(false)} aria-label="Close payment form">×</button></header>
         <div className="payment-form-body">
           {notice && <div className="form-error" role="alert">{notice}</div>}
           <Block title="Payment Information">
@@ -226,9 +269,10 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
           </Block>
           <div className="payment-summary"><Metric label="Event total" value={total} /><Metric label="Total paid" value={paid} /><Metric label="Current balance" value={Math.max(0, total - paid)} /><Metric label="New balance" value={newBalance} /></div>
         </div>
-        <footer className="payment-form-footer"><button type="button" onClick={() => setOpen(false)} disabled={busy}>Cancel</button><button type="submit" className="gold-button" disabled={!canSubmit}>{busy ? "Recording…" : "Record Payment"}</button></footer>
+        <footer className="payment-form-footer"><button type="button" onClick={() => setOpen(false)} disabled={busy}>Cancel</button><button type="submit" className="gold-button" disabled={!canSubmit}>{busy ? "Saving…" : editing ? "Save Changes" : "Record Payment"}</button></footer>
       </form>
     </div>}
+    {confirmation.dialog}
   </div>;
 }
 

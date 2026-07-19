@@ -1,0 +1,14 @@
+.record-details-overlay { position: fixed; inset: 0; z-index: 120; }
+.record-details-scrim { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 0; background: #000a; }
+.record-details-overlay > section { position: absolute; right: 0; top: 0; bottom: 0; width: min(660px, 96vw); display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+.record-details-overlay header { display: flex; justify-content: space-between; align-items: flex-start; padding: 24px 26px; border-bottom: 1px solid var(--line); }
+.record-details-overlay header h2 { margin: 0; font: 500 25px "Playfair Display", serif; }
+.record-details-overlay header > button { border: 0; background: transparent; font-size: 25px; }
+.record-details-overlay dl { min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0; background: var(--line); }
+.record-details-overlay dl > div { min-width: 0; padding: 15px 18px; background: #fff; }
+.record-details-overlay dt { margin-bottom: 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.record-details-overlay dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.record-details-overlay footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 22px; border-top: 1px solid var(--line); box-shadow: 0 -8px 20px #1111; }
+.record-details-overlay footer button { min-height: 46px; padding: 0 18px; }
+@media (max-width: 560px) { .record-details-overlay > section { width: 100vw; } .record-details-overlay dl { grid-template-columns: 1fr; } .record-details-overlay footer button { flex: 1; } }
+
