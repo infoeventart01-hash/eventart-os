@@ -18,7 +18,7 @@ test("renders the branded EventArt login without exposing the management shell",
   const response = await (await worker()).fetch(new Request("http://localhost/login", { headers: { accept: "text/html" } }), env, ctx);
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /EventArt \| Luxury Event Design &amp; Styling/i);
+  assert.match(html, /<title>EventArt<\/title>/i);
   assert.match(html, /eventart-logo-transparent\.png/i);
   assert.match(html, /Welcome to EventArt/i);
   assert.doesNotMatch(html, /Your site is taking shape|Codex is working|Starter Project/i);

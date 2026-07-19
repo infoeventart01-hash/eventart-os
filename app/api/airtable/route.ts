@@ -29,6 +29,7 @@ const writable: Record<string, Set<string>> = {
 };
 const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order", "Guest Count", "Budget", "Total Contract", "Deposit Paid", "Payment Amount", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Seat Number", "Children", "Total Fee", "Amount Paid", "Table Number", "Capacity", "Version", "Quantity Owned", "Quantity Available", "Replacement Cost"]);
 const recentRequests = new Map<string, number>();
+const pendingRequests = new Set<string>();
 const linkDefinitions: Record<string, Record<string, { table: string; primary: string }>> = {
   Clients: { "Events 2": { table: "Events", primary: "Event Name" } },
   Events: { Clients: { table: "Clients", primary: "Client Name" } },
@@ -227,20 +228,25 @@ export async function POST(request: NextRequest) {
   if (typeof requestId === "string") {
     const now = Date.now();
     const seen = recentRequests.get(requestId);
-    if (seen && now - seen < 30000) return NextResponse.json({ error: "Duplicate submission prevented" }, { status: 409 });
-    recentRequests.set(requestId, now);
+    if (pendingRequests.has(requestId) || (seen && now - seen < 30000)) return NextResponse.json({ error: "Duplicate submission prevented" }, { status: 409 });
   }
   let validated: Record<string, unknown> | null;
   try { validated = safeFields(table, fields); } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid values" }, { status: 400 }); }
   if (!validated || !Object.keys(validated).length) return NextResponse.json({ error: "No approved fields were supplied" }, { status: 400 });
   if (table === "Guests") { const seatingError = await guestSeatingError(validated, undefined, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
+  if (typeof requestId === "string") pendingRequests.add(requestId);
   try {
-    const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`, { method: "POST", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
+    // Vendor category/status labels are managed by the form and may predate the
+    // corresponding Airtable single-select option. Let Airtable reconcile them.
+    const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`, { method: "POST", headers: headers(), body: JSON.stringify({ fields: validated, typecast: table === "Vendors" }) });
     const data: unknown = await payload(response);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
+    if (typeof requestId === "string") recentRequests.set(requestId, Date.now());
     return NextResponse.json(data, { status: 201 });
   } catch {
     return NextResponse.json({ error: { type: "NETWORK_ERROR", message: "Unable to connect to Airtable" } }, { status: 502 });
+  } finally {
+    if (typeof requestId === "string") pendingRequests.delete(requestId);
   }
 }
 

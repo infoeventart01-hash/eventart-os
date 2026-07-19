@@ -77,8 +77,17 @@ test("CRUD, duplicate protection, confirmations and automatic refresh are presen
   assert.match(api, /Duplicate submission prevented/);
   assert.match(form, /if\(saving\)return/);
   assert.match(form, /disabled=\{saving/);
+  assert.doesNotMatch(form, /disabled=\{saving\|\|missing\.length>0\}/);
+  assert.match(form, /const emptyLabel=.*field\.required/);
   assert.match(page, /window\.confirm/);
   assert.match(workspace, /await load\(\)/);
+});
+
+test("vendor creation reconciles managed select values and allows retries after failures", async () => {
+  const api = await source("../app/api/airtable/route.ts");
+  assert.match(api, /typecast: table === "Vendors"/);
+  assert.match(api, /pendingRequests\.delete\(requestId\)/);
+  assert.match(api, /recentRequests\.set\(requestId, Date\.now\(\)\)/);
 });
 
 test("attachment workflows create records before upload and enforce file limits", async () => {
@@ -99,4 +108,13 @@ test("security protects management writes and keeps public seating read-only", a
   assert.match(seating, /export async function GET/);
   assert.doesNotMatch(seating, /export async function (?:POST|PATCH|DELETE)/);
   assert.doesNotMatch(seating, /Email|Phone|Payment|Notes/);
+});
+
+test("production URLs use the configured EventArt app origin", async () => {
+  const [layout, qr, forgot, users] = await Promise.all([source("../app/layout.tsx"), source("../app/api/seating-qr/[eventId]/route.ts"), source("../app/api/auth/forgot-password/route.ts"), source("../app/api/auth/users/route.ts")]);
+  assert.match(layout, /title: "EventArt"/);
+  assert.match(qr, /process\.env\.EVENTART_APP_URL/);
+  assert.match(forgot, /process\.env\.EVENTART_APP_URL/);
+  assert.match(users, /process\.env\.EVENTART_APP_URL/);
+  for (const text of [layout, qr, forgot, users]) assert.doesNotMatch(text, /localhost:300[01]|workers\.dev/);
 });

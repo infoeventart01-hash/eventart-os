@@ -87,7 +87,7 @@ npx wrangler secret put EVENTART_APP_URL
 npx wrangler secret put EVENTART_PORTAL_SIGNING_SECRET
 ```
 
-For production, `EVENTART_APP_URL` must be the final HTTPS EventArt URL, without a trailing slash. Add its `/auth/callback` URL to the Supabase redirect allow list before testing invitations or password resets.
+For production, set `EVENTART_APP_URL=https://app.eventart.ca`. EventArt OS is hosted only on this subdomain; the existing `eventart.ca` website remains separate. Add `https://app.eventart.ca/auth/callback`, `https://app.eventart.ca/reset-password`, and `https://app.eventart.ca/**` to the Supabase redirect allow list before testing invitations or password resets.
 
 To verify without deploying:
 

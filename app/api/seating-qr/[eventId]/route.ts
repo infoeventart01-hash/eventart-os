@@ -37,7 +37,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
     if (!eventResponse.ok) return NextResponse.json({ error: safeAirtableError(eventData, eventResponse.status) }, { status: eventResponse.status });
 
     // This follows the local development origin and the deployed application origin automatically.
-    const publicUrl = new URL(`/seating/${encodeURIComponent(eventId)}`, new URL(request.url).origin).toString();
+    const appOrigin = (process.env.EVENTART_APP_URL || new URL(request.url).origin).replace(/\/$/, "");
+    const publicUrl = new URL(`/seating/${encodeURIComponent(eventId)}`, appOrigin).toString();
     const options = { errorCorrectionLevel: "H" as const, width: 1400, margin: 5, color: { dark: "#111111", light: "#fffaf0" } };
     const [png, svg] = await Promise.all([QRCode.toDataURL(publicUrl, options), QRCode.toString(publicUrl, { ...options, type: "svg" })]);
     const encodedPng = png.slice(png.indexOf(",") + 1);
