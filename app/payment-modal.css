@@ -1,0 +1,75 @@
+.payment-form {
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.payment-form > header {
+  flex: 0 0 auto;
+  background: #fff;
+  z-index: 2;
+}
+
+.payment-form-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.payment-form .record-form-grid {
+  overflow: visible;
+}
+
+.field-error {
+  display: block;
+  color: #8f342c;
+  font-size: 13px;
+  line-height: 1.35;
+  margin-top: 6px;
+}
+
+.record-form .payment-form-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  flex: 0 0 auto;
+  background: #fff;
+  box-shadow: 0 -8px 20px #1111;
+}
+
+.payment-form-footer button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+@media (max-width: 560px) {
+  .payment-form {
+    width: 100vw;
+  }
+
+  .payment-form > header {
+    padding: 16px;
+  }
+
+  .payment-form-section {
+    padding: 14px;
+  }
+
+  .payment-form .record-form-grid {
+    padding: 12px 0;
+  }
+
+  .payment-summary {
+    grid-template-columns: 1fr 1fr;
+    margin: 14px;
+  }
+
+  .record-form .payment-form-footer {
+    padding: 12px 14px;
+  }
+
+  .payment-form-footer button {
+    min-height: 48px;
+    flex: 1;
+  }
+}
+

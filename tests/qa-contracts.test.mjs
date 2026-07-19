@@ -83,9 +83,9 @@ test("CRUD, duplicate protection, confirmations and automatic refresh are presen
   assert.match(workspace, /await load\(\)/);
 });
 
-test("vendor creation reconciles managed select values and allows retries after failures", async () => {
+test("record creation preserves Airtable select schemas and allows retries after failures", async () => {
   const api = await source("../app/api/airtable/route.ts");
-  assert.match(api, /typecast: table === "Vendors"/);
+  assert.match(api, /typecast: false/);
   assert.match(api, /pendingRequests\.delete\(requestId\)/);
   assert.match(api, /recentRequests\.set\(requestId, Date\.now\(\)\)/);
 });
@@ -135,22 +135,30 @@ test("dashboard isolates widget failures and never renders raw error objects", a
   assert.match(styles, /dashboard-warning/);
 });
 
-test("payments require event links, generate unique document numbers and preserve proposal references", async () => {
-  const [ui, api, styles] = await Promise.all([
+test("payments use exact Airtable choices, require event links, and preserve proposal references", async () => {
+  const [ui, form, api, contract, styles] = await Promise.all([
     source("../app/PaymentsWorkspace.tsx"),
+    source("../app/RecordForm.tsx"),
     source("../app/api/airtable/route.ts"),
+    source("../lib/payment-contract.mjs"),
     source("../app/payments.css"),
   ]);
-  for (const value of ["Event Deposit", "Progress Payment", "Final Event Payment", "Rental Deposit", "Rental Balance", "Refund", "Booking Event", "Other"]) assert.match(ui, new RegExp(value));
+  for (const value of ["Booking Deposit", "Progress Payment", "Final Payment", "Rental Deposit", "Rental Balance", "Refund", "Damage Charge", "Other", "Design Deposit"]) {
+    assert.match(form, new RegExp(value));
+    assert.match(contract, new RegExp(value));
+  }
+  for (const value of ["Cash", "Debit", "Credit Card", "E-Transfer", "Bank Transfer", "Cheque", "Overdue"]) assert.match(form, new RegExp(value));
+  assert.match(form, /Other Description/);
+  assert.match(form, /Reference Number/);
   assert.match(api, /Select an Event before recording the payment/);
   assert.match(api, /Proposal \/ Budget/);
   assert.match(api, /Proposal Number/);
   assert.match(api, /next\("PAY"\)/);
   assert.match(api, /next\("INV"\)/);
   assert.match(api, /next\("REC"\)/);
-  assert.match(ui, /Payment received/);
-  assert.match(ui, /Refund processed/);
+  assert.match(ui, /Payment recorded successfully/);
+  assert.match(ui, /Payment status:/);
   assert.match(ui, /Download \/ Print PDF/);
-  assert.match(ui, /Email service not configured/);
+  assert.match(ui, /print\(row, "receipt"\)/);
   assert.match(styles, /payment-summary/);
 });

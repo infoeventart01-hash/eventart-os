@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { calculateFinancialSummary, type FinancialRecord } from "./financials";
 import { requireIdentity, type EventArtIdentity } from "../../../lib/auth";
+import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES, normalizePaymentType } from "../../../lib/payment-contract.mjs";
 
 function cleanEnv(value: string | undefined) {
   return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim() || "";
@@ -117,6 +118,7 @@ function safeFields(table: string, input: unknown) {
   const output: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(input as Record<string, unknown>)) {
     if (!writable[table].has(name)) continue;
+    if (value === undefined) continue;
     // "Budget" is a currency field on Events but a linked-record field on Budget Items.
     if (numericFields.has(name) && !(table === "Budget Items" && name === "Budget")) {
       const number = typeof value === "number" ? value : Number(value);
@@ -260,16 +262,25 @@ export async function POST(request: NextRequest) {
   if (table === "Payments") {
     const eventId = Array.isArray(validated.Event) ? String(validated.Event[0] || "") : "";
     if (!/^rec[A-Za-z0-9]{14}$/.test(eventId)) return NextResponse.json({ error: "Select an Event before recording the payment." }, { status: 400 });
-    const paymentType = String(validated["Payment Type"] || "");
-    const approvedTypes = new Set(["Event Deposit", "Progress Payment", "Final Event Payment", "Rental Deposit", "Rental Balance", "Refund", "Booking Event", "Other"]);
+    const paymentType = normalizePaymentType(validated["Payment Type"]);
+    const approvedTypes = new Set(PAYMENT_TYPES);
     if (!approvedTypes.has(paymentType)) return NextResponse.json({ error: "Select a valid payment type." }, { status: 400 });
+    validated["Payment Type"] = paymentType;
     if (paymentType === "Other" && !String(validated["Other Description"] || "").trim()) return NextResponse.json({ error: "Describe the Other payment type." }, { status: 400 });
+    const amount = Number(validated["Payment Amount"]);
+    if (!Number.isFinite(amount) || Math.abs(amount) <= 0) return NextResponse.json({ error: "Enter a payment amount greater than zero." }, { status: 400 });
+    validated["Payment Amount"] = paymentType === "Refund" ? -Math.abs(amount) : amount;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(validated["Payment Date"] || ""))) return NextResponse.json({ error: "Select a valid Payment Date." }, { status: 400 });
+    if (validated["Payment Method"] && !new Set(PAYMENT_METHODS).has(String(validated["Payment Method"]))) return NextResponse.json({ error: "Select a valid Payment Method." }, { status: 400 });
+    if (validated["Payment Status"] && !new Set(PAYMENT_STATUSES).has(String(validated["Payment Status"]))) return NextResponse.json({ error: "Select a valid Payment Status." }, { status: 400 });
     const event = await existingRecord("Events", eventId);
     if (!event) return NextResponse.json({ error: "The selected Event no longer exists." }, { status: 400 });
     const eventClients = Array.isArray(event.fields.Clients) ? event.fields.Clients.map(String) : [];
+    if (!eventClients.length) return NextResponse.json({ error: "The selected Event does not have a linked Client." }, { status: 400 });
     validated.Client = eventClients.slice(0, 1);
     const budgetId = Array.isArray(validated["Proposal / Budget"]) ? String((validated["Proposal / Budget"] as unknown[])[0] || "") : "";
     if (budgetId) {
+      if (!/^rec[A-Za-z0-9]{14}$/.test(budgetId)) return NextResponse.json({ error: "Select a valid Proposal / Budget." }, { status: 400 });
       const budget = await existingRecord("Budgets", budgetId);
       const linkedEvents = Array.isArray(budget?.fields.Event) ? budget!.fields.Event as string[] : [];
       if (!budget || !linkedEvents.includes(eventId)) return NextResponse.json({ error: "The selected Proposal / Budget does not belong to this Event." }, { status: 400 });
@@ -297,9 +308,7 @@ export async function POST(request: NextRequest) {
   if (table === "Guests") { const seatingError = await guestSeatingError(validated, undefined, Boolean(allowOverbook)); if (seatingError) return NextResponse.json({ error: seatingError }, { status: 409 }); }
   if (typeof requestId === "string") pendingRequests.add(requestId);
   try {
-    // Vendor category/status labels are managed by the form and may predate the
-    // corresponding Airtable single-select option. Let Airtable reconcile them.
-    const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`, { method: "POST", headers: headers(), body: JSON.stringify({ fields: validated, typecast: table === "Vendors" || table === "Payments" }) });
+    const response = await fetch(`https://api.airtable.com/v0/${encodeURIComponent(BASE_ID)}/${encodeURIComponent(table)}`, { method: "POST", headers: headers(), body: JSON.stringify({ fields: validated, typecast: false }) });
     const data: unknown = await payload(response);
     if (!response.ok) return NextResponse.json(safeAirtableError(data, response.status), { status: response.status });
     if (typeof requestId === "string") recentRequests.set(requestId, Date.now());
