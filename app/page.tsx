@@ -5,8 +5,22 @@ import EventWorkspace from "./EventWorkspace";
 import RecordForm, { formConfigs } from "./RecordForm";
 import DesignStudio from "./DesignStudio";
 import UserManagement from "./UserManagement";
+import PaymentsWorkspace from "./PaymentsWorkspace";
 
 type RecordRow = { id: string; createdTime?: string; fields: Record<string, unknown>; displayFields?: Record<string, string>; computedFields?: Record<string, number> };
+type DashboardErrors = Record<string, string>;
+
+function errorMessage(value: unknown, fallback = "An unexpected error occurred.") {
+  if (value instanceof Error && value.message) return value.message;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value && typeof value === "object") {
+    const payload = value as { message?: unknown; error?: unknown; type?: unknown };
+    if (typeof payload.message === "string" && payload.message.trim()) return payload.message.trim();
+    if (payload.error !== undefined) return errorMessage(payload.error, fallback);
+    if (typeof payload.type === "string" && payload.type.trim()) return payload.type.replaceAll("_", " ").toLowerCase();
+  }
+  return fallback;
+}
 
 const sections = [
   ["Dashboard", "Overview", "dashboard"],
@@ -90,6 +104,7 @@ export default function EventArt() {
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [dashboardErrors, setDashboardErrors] = useState<DashboardErrors>({});
   const [query, setQuery] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [editing, setEditing] = useState<RecordRow | null>(null);
@@ -142,21 +157,33 @@ export default function EventArt() {
     let cancelled = false;
     async function load() {
       if(mode==="users"){setLoading(false);setRecords([]);return}
-      setLoading(true); setError(""); setRecords([]);
-      const tables = mode === "dashboard" ? ["Events", "Payments", "Timeline"] : mode === "budgets" ? ["Budgets", "Events"] : [table];
+      setLoading(true); setError(""); setDashboardErrors({}); setRecords([]);
+      const tables = mode === "dashboard" ? ["Events", "Clients", "Payments", "Timeline"] : mode === "budgets" ? ["Budgets", "Events"] : [table];
       try {
-        const result = await Promise.all(tables.map(async (name) => {
+        const loadTable = async (name: string) => {
           const res = await fetch(`/api/airtable?table=${encodeURIComponent(name)}&pageSize=100&resolveLinks=1${name === "Events" ? "&financialSummary=1" : ""}`);
-          if (!res.ok) throw new Error((await res.json()).error || "Unable to reach Airtable");
-          const data = await res.json();
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(errorMessage(data, `Unable to load ${name} from Airtable.`));
           return { records: (data.records || []).map((record: RecordRow) => ({ ...record, _table: name })), financialTotals: name === "Events" ? data.financialTotals : undefined };
-        }));
+        };
+        const result = [] as Array<{ records: Array<RecordRow & { _table: string }>; financialTotals?: { revenueReceived: number; outstanding: number } }>;
+        const failures: DashboardErrors = {};
+        for (const name of tables) {
+          try { result.push(await loadTable(name)); }
+          catch (failure) {
+            const message = errorMessage(failure, `Unable to load ${name}.`);
+            if (mode === "dashboard") failures[name] = message;
+            else throw failure;
+            if (process.env.NODE_ENV === "development") console.error("EventArt dashboard widget error", { table: name, message });
+          }
+        }
         if (!cancelled) {
           setRecords(result.flatMap(entry => entry.records));
+          setDashboardErrors(failures);
           const totals = result.find(entry => entry.financialTotals)?.financialTotals;
           setFinancialTotals(totals || { revenueReceived: 0, outstanding: 0 });
         }
-      } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load Airtable"); }
+      } catch (e) { if (!cancelled) setError(errorMessage(e, "Unable to load this page.")); }
       finally { if (!cancelled) setLoading(false); }
     }
     load();
@@ -165,6 +192,7 @@ export default function EventArt() {
 
   const filtered = useMemo(() => records.filter((r) => JSON.stringify(r.fields).toLowerCase().includes(query.toLowerCase())), [records, query]);
   const events = records.filter((r) => (r as RecordRow & { _table?: string })._table === "Events" || table === "Events");
+  const clients = records.filter((r) => (r as RecordRow & { _table?: string })._table === "Clients" || table === "Clients");
   const payments = records.filter((r) => (r as RecordRow & { _table?: string })._table === "Payments" || table === "Payments");
   const timeline = records.filter((r) => (r as RecordRow & { _table?: string })._table === "Timeline" || table === "Timeline");
 
@@ -213,9 +241,9 @@ export default function EventArt() {
 
         <div className={budgetEvent ? "content budget-content" : "content"}>
           {budgetEvent ? <EventWorkspace event={budgetEvent} initialTab={workspaceTab} role={identity?.role} onBack={() => navigate("Events")} /> : <>
-          {mode!=="design"&&<div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? `Welcome back, ${firstName}` : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : mode==="users"?"Invite users and control their EventArt access.":`Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>}
+          {mode!=="design"&&<div className="page-head"><div><p className="eyebrow">EVENTART / {active.toUpperCase()}</p><h1>{active === "Dashboard" ? `Welcome back, ${firstName}` : active}</h1><p>{active === "Dashboard" ? "Today you're creating unforgettable celebrations." : mode==="users"?"Invite users and control their EventArt access.":`Live ${active.toLowerCase()} information from your Airtable base.`}</p></div>{formConfigs[table] && mode!=="payments" && <button className="gold-button" onClick={() => setCreateTable(table)}>＋ Add {active.replace(/s$/, "")}</button>}</div>}
           {notice && <div className="notice">{notice}</div>}
-          {mode === "users" ? <UserManagement/> : mode === "design" ? <DesignStudio onOpenEvent={(event)=>openWorkspace(event,"Design Studio")}/> : loading ? <Loading /> : error ? <Empty error={error} /> : mode === "dashboard" ? <Dashboard events={events} timeline={timeline} financialTotals={financialTotals} /> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={openWorkspace} onDelete={budget => remove(budget,"Budgets")} /> : mode==="catalog"?<CatalogPage records={records} onEdit={setEditing} onDuplicate={duplicateService} onArchive={record=>catalogUpdate(record,{Active:false})} onDelete={record=>remove(record,"Service Catalog")}/>: <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={openWorkspace} />}
+          {mode === "users" ? <UserManagement/> : mode === "design" ? <DesignStudio onOpenEvent={(event)=>openWorkspace(event,"Design Studio")}/> : loading ? <Loading /> : error ? <Empty error={error} retry={()=>setRefreshKey(key=>key+1)} /> : mode === "dashboard" ? <Dashboard events={events} clients={clients} payments={payments} timeline={timeline} financialTotals={financialTotals} errors={dashboardErrors} retry={()=>setRefreshKey(key=>key+1)} /> : mode === "payments" ? <PaymentsWorkspace payments={payments} recordedBy={identity?.name||identity?.email||"EventArt"} onChanged={()=>setRefreshKey(key=>key+1)}/> : mode === "reports" ? <Reports payments={payments} /> : mode === "calendar" ? <Calendar records={events} /> : mode === "kanban" ? <Kanban records={events} /> : mode === "budgets" ? <BudgetsPage records={records} query={query} open={openWorkspace} onDelete={budget => remove(budget,"Budgets")} /> : mode==="catalog"?<CatalogPage records={records} onEdit={setEditing} onDuplicate={duplicateService} onArchive={record=>catalogUpdate(record,{Active:false})} onDelete={record=>remove(record,"Service Catalog")}/>: <RecordTable table={table} records={filtered} onEdit={setEditing} onDelete={remove} onBudget={openWorkspace} />}
           </>}
         </div>
       </section>
@@ -228,15 +256,26 @@ export default function EventArt() {
 
 function NavButton({label,active,select}:{label:string;active:string;select:(label:string)=>void}){return <button className={active===label?"active":""} onClick={()=>select(label)}><span className="nav-icon" aria-hidden="true"/>{label}</button>}
 function Loading() { return <div className="loading-grid">{[1,2,3,4].map((n) => <div className="skeleton" key={n} />)}</div>; }
-function Empty({ error }: { error: string }) { return <div className="empty"><img src="/eventart-logo-transparent.png" alt="EventArt" /><h2>We couldn&apos;t load this page.</h2><p>{error}</p><span>Please refresh and try again.</span></div>; }
+function Empty({ error, retry }: { error: string; retry: () => void }) { return <div className="empty" role="alert"><img src="/eventart-logo-transparent.png" alt="EventArt" /><h2>Unable to load this page.</h2><p><strong>Reason:</strong> {errorMessage(error)}</p><button className="gold-button" onClick={retry}>Try again</button></div>; }
 
-function Dashboard({ events, timeline, financialTotals }: { events: RecordRow[]; timeline: RecordRow[]; financialTotals: { revenueReceived: number; outstanding: number } }) {
+function Dashboard({ events, clients, payments, timeline, financialTotals, errors, retry }: { events: RecordRow[]; clients: RecordRow[]; payments: RecordRow[]; timeline: RecordRow[]; financialTotals: { revenueReceived: number; outstanding: number }; errors: DashboardErrors; retry: () => void }) {
   const booked = events.filter((e) => ["Contract Signed", "Deposit Paid", "Planning", "Design Approved"].includes(String(e.fields["Event Status"]))).length;
   const upcoming = [...events].filter((e) => e.fields["Ceremony Date & Time"]).sort((a,b) => String(a.fields["Ceremony Date & Time"]).localeCompare(String(b.fields["Ceremony Date & Time"]))).slice(0,4);
+  const recentClients = [...clients].sort((a,b)=>String(b.createdTime||"").localeCompare(String(a.createdTime||""))).slice(0,4);
+  const recentPayments = [...payments].sort((a,b)=>String(b.fields["Payment Date"]||"").localeCompare(String(a.fields["Payment Date"]||""))).slice(0,4);
+  const errorEntries = Object.entries(errors);
   return <>
-    <div className="metrics"><Metric label="Active events" value={String(booked || events.length)} note="Currently in your pipeline" /><Metric label="Revenue received" value={money(financialTotals.revenueReceived)} note="Paid transactions" /><Metric label="Outstanding" value={money(financialTotals.outstanding)} note="Across active events" /><Metric label="Open tasks" value={String(timeline.filter((t) => t.fields.Status !== "Completed").length)} note="Timeline items remaining" /></div>
+    {errorEntries.length > 0 && <section className="dashboard-warning" role="alert"><h2>Some dashboard information is temporarily unavailable.</h2>{errorEntries.map(([table,message])=><p key={table}><strong>{table}:</strong> {message}</p>)}<button onClick={retry}>Retry unavailable widgets</button></section>}
+    <div className="metrics"><Metric label="Upcoming Events" value={String(booked || events.length)} note="Currently in your pipeline" /><Metric label="Revenue" value={money(financialTotals.revenueReceived)} note="Paid transactions" /><Metric label="Outstanding Balances" value={money(financialTotals.outstanding)} note="Across active events" /><Metric label="Open tasks" value={String(timeline.filter((t) => t.fields.Status !== "Completed").length)} note="Timeline items remaining" /></div>
     <div className="dashboard-grid"><section className="card span2"><CardHead title="Upcoming events" /><div className="event-list">{upcoming.length ? upcoming.map((e) => <div className="event-row" key={e.id}><div className="date-tile"><b>{new Date(String(e.fields["Ceremony Date & Time"])).toLocaleDateString("en-CA", { day: "2-digit" })}</b><span>{new Date(String(e.fields["Ceremony Date & Time"])).toLocaleDateString("en-CA", { month: "short" }).toUpperCase()}</span></div><div className="event-main"><strong>{shown(e.fields["Event Name"])}</strong><span>{shown(e.fields["Venue Name"])}</span></div><span className="pill">{shown(e.fields["Event Status"])}</span><span className="chev">›</span></div>) : <p className="muted">No upcoming events found.</p>}</div></section>
     <section className="card"><CardHead title="Today’s focus" /><div className="focus-list">{timeline.slice(0,5).map((t) => <label key={t.id}><span className={t.fields.Status === "Completed" ? "check checked" : "check"}>✓</span><span><strong>{shown(t.fields["Timeline Item"])}</strong><small>{shown(t.fields.Category)} · {shown(t.fields.Priority)} priority</small></span></label>)}{!timeline.length && <p className="muted">No timeline items yet.</p>}</div></section></div>
+    <div className="dashboard-secondary">
+      <section className="card"><CardHead title="Recent Clients" /><div className="focus-list">{recentClients.map(client=><div className="dashboard-list-item" key={client.id}><strong>{shown(client.fields["Client Name"])}</strong><small>{shown(client.fields.Status)}</small></div>)}{!recentClients.length&&<p className="muted">No recent clients found.</p>}</div></section>
+      <section className="card"><CardHead title="Payments" /><div className="focus-list">{recentPayments.map(payment=><div className="dashboard-list-item" key={payment.id}><strong>{money(payment.fields["Payment Amount"])}</strong><small>{shown(payment.fields["Payment Status"])}</small></div>)}{!recentPayments.length&&<p className="muted">No payments found.</p>}</div></section>
+      <section className="card"><CardHead title="Quick Actions" /><div className="quick-actions"><button onClick={()=>window.location.assign("/events")}>View Events</button><button onClick={()=>window.location.assign("/clients")}>View Clients</button><button onClick={()=>window.location.assign("/payments")}>View Payments</button></div></section>
+      <section className="card"><CardHead title="Calendar" /><p className="muted">{upcoming.length ? `${upcoming.length} upcoming events are scheduled.` : "No upcoming events scheduled."}</p></section>
+      <section className="card"><CardHead title="Notifications" /><div className="focus-list">{timeline.slice(0,4).map(task=><div className="dashboard-list-item" key={task.id}><strong>{shown(task.fields["Timeline Item"])}</strong><small>{shown(task.fields.Priority)} priority</small></div>)}{!timeline.length&&<p className="muted">You&apos;re all caught up.</p>}</div></section>
+    </div>
   </>;
 }
 

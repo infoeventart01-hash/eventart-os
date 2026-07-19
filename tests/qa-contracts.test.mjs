@@ -118,3 +118,39 @@ test("production URLs use the configured EventArt app origin", async () => {
   assert.match(users, /process\.env\.EVENTART_APP_URL/);
   for (const text of [layout, qr, forgot, users]) assert.doesNotMatch(text, /localhost:300[01]|workers\.dev/);
 });
+
+test("dashboard isolates widget failures and never renders raw error objects", async () => {
+  const [dashboard, api, styles] = await Promise.all([
+    source("../app/page.tsx"),
+    source("../app/api/airtable/route.ts"),
+    source("../app/dashboard.css"),
+  ]);
+  assert.match(dashboard, /function errorMessage\(value: unknown/);
+  assert.doesNotMatch(dashboard, /new Error\(\(await res\.json\(\)\)\.error/);
+  assert.match(dashboard, /Some dashboard information is temporarily unavailable/);
+  assert.match(dashboard, /Retry unavailable widgets/);
+  for (const label of ["Upcoming Events", "Recent Clients", "Revenue", "Payments", "Outstanding Balances", "Quick Actions", "Calendar", "Notifications"]) assert.match(dashboard, new RegExp(label));
+  assert.match(api, /EventArt Airtable request retry/);
+  assert.match(api, /EventArt Airtable loader error/);
+  assert.match(styles, /dashboard-warning/);
+});
+
+test("payments require event links, generate unique document numbers and preserve proposal references", async () => {
+  const [ui, api, styles] = await Promise.all([
+    source("../app/PaymentsWorkspace.tsx"),
+    source("../app/api/airtable/route.ts"),
+    source("../app/payments.css"),
+  ]);
+  for (const value of ["Event Deposit", "Progress Payment", "Final Event Payment", "Rental Deposit", "Rental Balance", "Refund", "Booking Event", "Other"]) assert.match(ui, new RegExp(value));
+  assert.match(api, /Select an Event before recording the payment/);
+  assert.match(api, /Proposal \/ Budget/);
+  assert.match(api, /Proposal Number/);
+  assert.match(api, /next\("PAY"\)/);
+  assert.match(api, /next\("INV"\)/);
+  assert.match(api, /next\("REC"\)/);
+  assert.match(ui, /Payment received/);
+  assert.match(ui, /Refund processed/);
+  assert.match(ui, /Download \/ Print PDF/);
+  assert.match(ui, /Email service not configured/);
+  assert.match(styles, /payment-summary/);
+});
