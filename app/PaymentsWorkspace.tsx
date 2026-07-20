@@ -9,6 +9,7 @@ import {
   readPaymentResponse,
   validatePaymentDraft,
 } from "@/lib/payment-contract.mjs";
+import { normalizeDateOnly } from "@/lib/date-only.mjs";
 import { useConfirmDialog } from "./ConfirmDialog";
 
 type Row = {
@@ -132,8 +133,8 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
       type: str(record.fields["Payment Type"]) || PAYMENT_TYPES[0],
       other: str(record.fields["Other Description"]),
       amount: String(Math.abs(Number(record.fields["Payment Amount"]) || 0) || ""),
-      date: str(record.fields["Payment Date"]),
-      due: str(record.fields["Due Date"]),
+      date: normalizeDateOnly(record.fields["Payment Date"], "Payment Date") || "",
+      due: normalizeDateOnly(record.fields["Due Date"], "Due Date") || "",
       method: str(record.fields["Payment Method"]) || "E-Transfer",
       status: str(record.fields["Payment Status"]) || "Paid",
       reference: str(record.fields["Reference Number"]),
@@ -170,7 +171,7 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
         fields["Proposal Number"] = str(budget?.fields["Proposal Number"]);
         fields["Reference Number"] = form.reference.trim();
         fields["Other Description"] = form.type === "Other" ? form.other.trim() : "";
-        fields["Due Date"] = form.due;
+        fields["Due Date"] = normalizeDateOnly(form.due, "Due Date") ?? null;
         fields.Notes = form.notes.trim();
       }
       const response = await fetch("/api/airtable", {
@@ -260,6 +261,7 @@ export default function PaymentsWorkspace({ payments, recordedBy, onChanged }: {
             {form.type === "Other" && <Field label="Other description *" error={errors.other}><input aria-invalid={Boolean(errors.other)} value={form.other} onChange={event => setForm({ ...form, other: event.target.value })} /></Field>}
             <Field label="Amount *" error={errors.amount}><input aria-invalid={Boolean(errors.amount)} type="number" min="0.01" step="0.01" value={form.amount} onChange={event => setForm({ ...form, amount: event.target.value })} /></Field>
             <Field label="Payment Date *" error={errors.date}><input aria-invalid={Boolean(errors.date)} type="date" value={form.date} onChange={event => setForm({ ...form, date: event.target.value })} /></Field>
+            <Field label="Due Date" error={errors.due}><input aria-invalid={Boolean(errors.due)} type="date" value={form.due} onChange={event => setForm({ ...form, due: event.target.value })} /></Field>
             <Field label="Payment Method"><select value={form.method} onChange={event => setForm({ ...form, method: event.target.value })}>{PAYMENT_METHODS.map(value => <option key={value}>{value}</option>)}</select></Field>
             <Field label="Status"><select value={form.status} onChange={event => setForm({ ...form, status: event.target.value })}>{PAYMENT_STATUSES.map(value => <option key={value}>{value}</option>)}</select></Field>
           </Block>

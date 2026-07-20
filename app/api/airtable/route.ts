@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { calculateFinancialSummary, type FinancialRecord } from "./financials";
 import { requireIdentity, type EventArtIdentity } from "../../../lib/auth";
 import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES, normalizePaymentType } from "../../../lib/payment-contract.mjs";
+import { normalizeDateOnly } from "../../../lib/date-only.mjs";
 
 function cleanEnv(value: string | undefined) {
   return value?.trim().replace(/^(['"])(.*)\1$/, "$2").trim() || "";
@@ -29,6 +30,14 @@ const writable: Record<string, Set<string>> = {
   "Service Catalog": new Set(["Service Name", "Category", "Description", "Standard Unit Cost", "Standard Unit Price", "Taxable", "Tax Rate", "Optional by Default", "Active", "Event Types", "Image", "Internal Notes", "Display Order"]),
 };
 const numericFields = new Set(["Event Discount", "Contingency Value", "Deposit Required", "Quantity", "Unit Cost", "Unit Price", "Discount", "Tax Rate", "Display Order", "Guest Count", "Budget", "Total Contract", "Deposit Paid", "Payment Amount", "Rental Price", "Delivery Fee", "Pickup Fee", "Setup Fee", "Security Deposit", "Seat Number", "Children", "Total Fee", "Amount Paid", "Table Number", "Capacity", "Version", "Quantity Owned", "Quantity Available", "Replacement Cost"]);
+const dateOnlyFields: Record<string, Set<string>> = {
+  "Rental Orders": new Set(["Rental Start Date", "Rental End Date"]),
+  Payments: new Set(["Payment Date", "Due Date"]),
+  Timeline: new Set(["Date"]),
+  Guests: new Set(["RSVP Date"]),
+  "Design Board": new Set(["Date Submitted", "Approval Date"]),
+  Budgets: new Set(["Proposal Date", "Expiration Date"]),
+};
 const recentRequests = new Map<string, number>();
 const pendingRequests = new Set<string>();
 const linkDefinitions: Record<string, Record<string, { table: string; primary: string }>> = {
@@ -110,7 +119,10 @@ function safeAirtableError(data: unknown, status: number, table?: string) {
     ? nested.message
     : typeof payload?.error === "string" ? payload.error : "Airtable request failed";
   console.error("EventArt Airtable API error", { table: table || "unknown", status, type, message });
-  return { error: { type, message } };
+  const publicMessage = table === "Payments" && /due date/i.test(message)
+    ? "Due Date must be a valid date."
+    : message;
+  return { error: { type, message: publicMessage } };
 }
 
 function safeFields(table: string, input: unknown) {
@@ -119,6 +131,14 @@ function safeFields(table: string, input: unknown) {
   for (const [name, value] of Object.entries(input as Record<string, unknown>)) {
     if (!writable[table].has(name)) continue;
     if (value === undefined) continue;
+    if (dateOnlyFields[table]?.has(name)) {
+      if (value === null) output[name] = null;
+      else {
+        const normalized = normalizeDateOnly(value, name);
+        if (normalized) output[name] = normalized;
+      }
+      continue;
+    }
     // "Budget" is a currency field on Events but a linked-record field on Budget Items.
     if (numericFields.has(name) && !(table === "Budget Items" && name === "Budget")) {
       const number = typeof value === "number" ? value : Number(value);

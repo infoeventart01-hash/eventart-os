@@ -8,6 +8,7 @@ import {
   readPaymentResponse,
   validatePaymentDraft,
 } from "../lib/payment-contract.mjs";
+import { normalizeDateOnly } from "../lib/date-only.mjs";
 
 const valid = {
   event: "recaP8tQAACIJOiCz",
@@ -45,6 +46,30 @@ test("proposal-linked payment uses the Proposal record ID and number", () => {
   const fields = buildPaymentFields({ ...valid, budget: "recBP8tQAACIJOiCz" }, { proposalNumber: "PROP-100" });
   assert.deepEqual(fields["Proposal / Budget"], ["recBP8tQAACIJOiCz"]);
   assert.equal(fields["Proposal Number"], "PROP-100");
+});
+
+test("date-only values normalize for existing and new Payment dates", () => {
+  assert.equal(normalizeDateOnly("2026-07-19"), "2026-07-19");
+  assert.equal(normalizeDateOnly("2026-07-19T15:45:00.000Z"), "2026-07-19");
+  assert.equal(normalizeDateOnly(new Date("2026-07-19T15:45:00.000Z")), "2026-07-19");
+  const fields = buildPaymentFields({ ...valid, due: "2026-08-01T00:00:00.000Z" });
+  assert.equal(fields["Payment Date"], "2026-07-19");
+  assert.equal(fields["Due Date"], "2026-08-01");
+});
+
+test("empty optional Due Date is omitted and invalid dates are rejected", () => {
+  assert.equal(normalizeDateOnly(""), undefined);
+  assert.equal("Due Date" in buildPaymentFields({ ...valid, due: "" }), false);
+  assert.throws(() => normalizeDateOnly("07/19/2026", "Due Date"), /Due Date must be a valid date/);
+  assert.throws(() => normalizeDateOnly("2026-02-30", "Due Date"), /Due Date must be a valid date/);
+  assert.throws(() => normalizeDateOnly("2026-07-19Tinvalid", "Due Date"), /Due Date must be a valid date/);
+});
+
+test("Payment edit sends null only when an optional Due Date is intentionally cleared", async () => {
+  const component = await readFile(new URL("../app/PaymentsWorkspace.tsx", import.meta.url), "utf8");
+  assert.match(component, /normalizeDateOnly\(record\.fields\["Due Date"\]/);
+  assert.match(component, /fields\["Due Date"\] = normalizeDateOnly\(form\.due, "Due Date"\) \?\? null/);
+  assert.match(component, /type="date" value=\{form\.due\}/);
 });
 
 test("invalid Airtable linked-record values are rejected", () => {
